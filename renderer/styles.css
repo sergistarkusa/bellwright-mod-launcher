@@ -1,0 +1,494 @@
+:root {
+  color-scheme: dark;
+  --bg: #101111;
+  --panel: #191c1b;
+  --panel-2: #202522;
+  --line: #313936;
+  --text: #f3efe5;
+  --muted: #a8afa8;
+  --accent: #d9b45f;
+  --accent-2: #7fb0a4;
+  --danger: #d17463;
+  --ok: #83c77d;
+  --shadow: rgba(0, 0, 0, 0.35);
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 860px;
+  overflow-x: hidden;
+  background:
+    linear-gradient(150deg, rgba(217, 180, 95, 0.16), transparent 34%),
+    radial-gradient(circle at 88% 10%, rgba(127, 176, 164, 0.14), transparent 30%),
+    var(--bg);
+  color: var(--text);
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+
+svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.shell {
+  width: min(1240px, calc(100vw - 44px));
+  margin: 22px auto;
+}
+
+.topbar,
+.statusStrip,
+.controls,
+.modCard {
+  border: 1px solid var(--line);
+  box-shadow: 0 18px 40px var(--shadow);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 116px;
+  padding: 24px;
+  background: rgba(25, 28, 27, 0.94);
+  border-radius: 8px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+}
+
+.brand p {
+  overflow-wrap: anywhere;
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(217, 180, 95, 0.45);
+  border-radius: 8px;
+  background: #23201a;
+  color: var(--accent);
+}
+
+.mark svg {
+  width: 34px;
+  height: 34px;
+}
+
+h1 {
+  margin: 0 0 7px;
+  font-size: 28px;
+  line-height: 1.1;
+  font-weight: 760;
+  letter-spacing: 0;
+}
+
+p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.iconButton,
+.launchButton,
+.toggleButton {
+  min-height: 42px;
+  border-radius: 8px;
+  transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.iconButton {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  background: #222725;
+  border: 1px solid var(--line);
+}
+
+.launchButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 18px;
+  background: var(--accent);
+  color: #17140d;
+  font-weight: 750;
+}
+
+.iconButton:hover,
+.toggleButton:hover {
+  background: #2a302d;
+  border-color: #52605a;
+}
+
+.launchButton:hover {
+  transform: translateY(-1px);
+}
+
+.statusStrip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 8px;
+  background: var(--line);
+}
+
+.statusItem {
+  padding: 16px 18px;
+  background: rgba(25, 28, 27, 0.92);
+}
+
+.label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+.statusItem strong {
+  font-size: 18px;
+}
+
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 14px;
+  padding: 14px;
+  background: rgba(25, 28, 27, 0.82);
+  border-radius: 8px;
+}
+
+.aboutSection {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  flex: 0 0 auto;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #141716;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.aboutSection span {
+  font-size: 12px;
+}
+
+.aboutSection strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.donateButton {
+  min-height: 32px;
+  padding: 0 11px;
+  border: 1px solid rgba(217, 180, 95, 0.42);
+  border-radius: 8px;
+  background: rgba(217, 180, 95, 0.12);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.donateButton:hover:not(:disabled) {
+  background: rgba(217, 180, 95, 0.2);
+  border-color: rgba(217, 180, 95, 0.72);
+}
+
+.donateButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.searchBox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 280px;
+  flex: 1;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #0f1110;
+  color: var(--muted);
+}
+
+.searchBox input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--text);
+  background: transparent;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.modColumn {
+  min-width: 0;
+  min-height: 360px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(25, 28, 27, 0.82);
+  box-shadow: 0 18px 40px var(--shadow);
+}
+
+.modColumn.dragOver {
+  border-color: var(--accent);
+  background: rgba(42, 48, 45, 0.92);
+}
+
+.columnHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 2px 12px;
+}
+
+.columnHeader h2 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+
+.columnHeader strong {
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--accent);
+  background: #141716;
+}
+
+.columnList {
+  display: grid;
+  gap: 6px;
+}
+
+.columnEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 170px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(15, 17, 16, 0.62);
+}
+
+.columnEmpty[hidden] {
+  display: none;
+}
+
+.modCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 46px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: rgba(25, 28, 27, 0.94);
+  cursor: grab;
+}
+
+.modCard.selected {
+  outline: 1px solid var(--accent);
+  background: #222725;
+}
+
+.modCard:active {
+  cursor: grabbing;
+}
+
+.modCard.dragging {
+  opacity: 0.55;
+}
+
+.modHeader {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  justify-content: flex-start;
+  gap: 12px;
+  margin: 0;
+}
+
+.modTitle {
+  min-width: 0;
+}
+
+.modTitle h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.folderName {
+  color: var(--muted);
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.pill {
+  align-self: flex-start;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.pill.active {
+  color: #0f1b10;
+  background: var(--ok);
+}
+
+.pill.disabled {
+  color: #201812;
+  background: #b7a58a;
+}
+
+.pill.workshop {
+  color: #081719;
+  background: var(--accent-2);
+}
+
+.description {
+  display: none;
+}
+
+.meta {
+  display: none;
+}
+
+.chip {
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  background: #141716;
+  font-size: 12px;
+}
+
+.cardActions {
+  display: contents;
+}
+
+.toggleButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 134px;
+  padding: 0 15px;
+  border: 1px solid var(--line);
+  background: #222725;
+  font-weight: 740;
+}
+
+.modCard .toggleButton {
+  min-width: 36px;
+  width: 36px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.modCard .toggleButton svg {
+  width: 16px;
+  height: 16px;
+}
+
+.modCard .toggleButton span {
+  display: none;
+}
+
+.toggleButton.disable {
+  color: #ffd6ce;
+}
+
+.toggleButton.enable {
+  color: #d9ffd4;
+}
+
+.toggleButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.note {
+  display: none;
+}
+
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  max-width: 460px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #252b28;
+  color: var(--text);
+  box-shadow: 0 16px 42px var(--shadow);
+}
+
+.toast.error {
+  border-color: rgba(209, 116, 99, 0.6);
+}
