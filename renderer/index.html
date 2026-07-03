@@ -59,12 +59,36 @@
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
           <input id="searchInput" type="search" placeholder="Search mods" autocomplete="off" />
         </div>
+        <section class="presetSection" aria-label="Mod presets">
+          <select id="presetSelect" title="Saved presets" aria-label="Saved presets">
+            <option value="">No presets</option>
+          </select>
+          <button id="savePresetButton" class="presetButton" type="button">Save</button>
+          <button id="loadPresetButton" class="presetButton" type="button" disabled>Load</button>
+          <button id="deletePresetButton" class="presetIconButton" type="button" title="Delete preset" aria-label="Delete preset" disabled>
+            <svg viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v5" /><path d="M14 11v5" /></svg>
+          </button>
+        </section>
         <section class="aboutSection" aria-label="FSD Software">
           <strong id="aboutMaker">FSD Software</strong>
-          <span id="appVersion">v0.1.2</span>
+          <span id="appVersion">v0.2.0</span>
+          <button id="updateButton" class="updateButton" type="button">
+            <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" /><path d="M3 16h6v6" /><path d="M3 12A9 9 0 0 1 18.4 5.6L21 8" /><path d="M21 8h-6V2" /></svg>
+            Update
+          </button>
           <button id="donateButton" class="donateButton" type="button" disabled>Donate</button>
           <button id="discordButton" class="donateButton" type="button" disabled>Discord</button>
         </section>
+      </section>
+      <section id="updateProgress" class="updateProgress" aria-live="polite" hidden>
+        <div class="updateProgressHeader">
+          <strong id="updateProgressTitle">Updating launcher</strong>
+          <span id="updateProgressPercent">0%</span>
+        </div>
+        <div class="progressTrack">
+          <div id="updateProgressBar" class="progressBar"></div>
+        </div>
+        <p id="updateProgressMessage">Checking GitHub release...</p>
       </section>
 
       <section class="board" aria-live="polite">
@@ -94,6 +118,18 @@
 
       </section>
     </main>
+
+    <div id="modalBackdrop" class="modalBackdrop" hidden>
+      <section class="modalPanel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <h2 id="modalTitle">Preset</h2>
+        <p id="modalMessage"></p>
+        <input id="modalInput" type="text" autocomplete="off" />
+        <div class="modalActions">
+          <button id="modalCancelButton" class="modalButton secondary" type="button">Cancel</button>
+          <button id="modalConfirmButton" class="modalButton primary" type="button">Save</button>
+        </div>
+      </section>
+    </div>
 
     <div id="toast" class="toast" hidden></div>
 

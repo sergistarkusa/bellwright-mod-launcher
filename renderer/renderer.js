@@ -13,16 +13,34 @@ const refreshButton = document.querySelector("#refreshButton");
 const folderButton = document.querySelector("#folderButton");
 const launchButton = document.querySelector("#launchButton");
 const searchInput = document.querySelector("#searchInput");
+const presetSelect = document.querySelector("#presetSelect");
+const savePresetButton = document.querySelector("#savePresetButton");
+const loadPresetButton = document.querySelector("#loadPresetButton");
+const deletePresetButton = document.querySelector("#deletePresetButton");
 const aboutMaker = document.querySelector("#aboutMaker");
 const appVersion = document.querySelector("#appVersion");
+const updateButton = document.querySelector("#updateButton");
 const donateButton = document.querySelector("#donateButton");
 const discordButton = document.querySelector("#discordButton");
+const updateProgress = document.querySelector("#updateProgress");
+const updateProgressTitle = document.querySelector("#updateProgressTitle");
+const updateProgressPercent = document.querySelector("#updateProgressPercent");
+const updateProgressBar = document.querySelector("#updateProgressBar");
+const updateProgressMessage = document.querySelector("#updateProgressMessage");
+const modalBackdrop = document.querySelector("#modalBackdrop");
+const modalTitle = document.querySelector("#modalTitle");
+const modalMessage = document.querySelector("#modalMessage");
+const modalInput = document.querySelector("#modalInput");
+const modalCancelButton = document.querySelector("#modalCancelButton");
+const modalConfirmButton = document.querySelector("#modalConfirmButton");
 const toast = document.querySelector("#toast");
 const dropColumns = [...document.querySelectorAll(".modColumn")];
 
 let state = null;
+let presets = [];
 let busy = false;
 let toastTimer = null;
+let pendingModal = null;
 
 const icons = {
   power: '<svg viewBox="0 0 24 24"><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" /></svg>',
@@ -39,11 +57,88 @@ function showToast(message, error = false) {
   }, 4200);
 }
 
+function showUpdateProgress(progress) {
+  updateProgress.hidden = false;
+  updateProgressTitle.textContent = progress.phase === "done" ? "Launcher update" : "Updating launcher";
+  updateProgressMessage.textContent = progress.message || "Working...";
+
+  const percent = Number.isFinite(progress.percent) ? Math.max(0, Math.min(progress.percent, 100)) : 8;
+  updateProgressPercent.textContent = Number.isFinite(progress.percent) ? `${percent}%` : "";
+  updateProgressBar.style.width = `${percent}%`;
+}
+
+function hideUpdateProgressSoon() {
+  setTimeout(() => {
+    updateProgress.hidden = true;
+  }, 1800);
+}
+
+function closeModal(result) {
+  if (!pendingModal) {
+    return;
+  }
+  const { resolve } = pendingModal;
+  pendingModal = null;
+  modalBackdrop.hidden = true;
+  modalInput.value = "";
+  modalInput.hidden = false;
+  resolve(result);
+}
+
+function openModal({ title, message, input = false, defaultValue = "", confirmText = "OK" }) {
+  if (pendingModal) {
+    closeModal(null);
+  }
+
+  modalTitle.textContent = title;
+  modalMessage.textContent = message || "";
+  modalInput.hidden = !input;
+  modalInput.value = defaultValue || "";
+  modalConfirmButton.textContent = confirmText;
+  modalBackdrop.hidden = false;
+
+  return new Promise((resolve) => {
+    pendingModal = { resolve, input };
+    requestAnimationFrame(() => {
+      if (input) {
+        modalInput.focus();
+        modalInput.select();
+      } else {
+        modalConfirmButton.focus();
+      }
+    });
+  });
+}
+
+function askPresetName(defaultValue) {
+  return openModal({
+    title: "Save preset",
+    message: "Preset name",
+    input: true,
+    defaultValue,
+    confirmText: "Save"
+  });
+}
+
+function askConfirm(title, message, confirmText = "OK") {
+  return openModal({
+    title,
+    message,
+    input: false,
+    confirmText
+  });
+}
+
 function setBusy(value) {
   busy = value;
   refreshButton.disabled = value;
   folderButton.disabled = value;
   launchButton.disabled = value;
+  savePresetButton.disabled = value;
+  updateButton.disabled = value;
+  loadPresetButton.disabled = value || !presetSelect.value || !state || state.gameRunning;
+  deletePresetButton.disabled = value || !presetSelect.value;
+  presetSelect.disabled = value || presets.length === 0;
   document.querySelectorAll(".toggleButton").forEach((button) => {
     button.disabled = value || state?.gameRunning;
   });
@@ -106,6 +201,43 @@ async function loadAppInfo() {
     donateButton.title = appInfo.donateUrl ? "Support FSD Software" : "Ko-fi link is not configured";
     discordButton.disabled = !appInfo.discordUrl;
     discordButton.title = appInfo.discordUrl ? "Join the Bellwright Discord section" : "Discord link is not configured";
+    updateButton.title = appInfo.updateSupported
+      ? `Update from ${appInfo.updateRepo || "GitHub"}`
+      : "Updates are applied from the packaged launcher";
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  }
+}
+
+function getSelectedPreset() {
+  return presets.find((preset) => preset.id === presetSelect.value) || null;
+}
+
+function renderPresets(selectedId = presetSelect.value) {
+  presetSelect.innerHTML = "";
+
+  if (presets.length === 0) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = "No presets";
+    presetSelect.appendChild(option);
+  } else {
+    for (const preset of presets) {
+      const option = document.createElement("option");
+      option.value = preset.id;
+      option.textContent = `${preset.name} (${preset.activeCount})`;
+      presetSelect.appendChild(option);
+    }
+    presetSelect.value = presets.some((preset) => preset.id === selectedId) ? selectedId : presets[0].id;
+  }
+
+  setBusy(busy);
+}
+
+async function loadPresets(selectedId = presetSelect.value) {
+  try {
+    presets = await window.bellwrightMods.listPresets();
+    renderPresets(selectedId);
   } catch (error) {
     showToast(error.message || String(error), true);
   }
@@ -136,6 +268,7 @@ function render() {
 
   renderColumn(activeList, activeEmpty, visibleActive);
   renderColumn(availableList, availableEmpty, visibleAvailable);
+  setBusy(busy);
 }
 
 function filterMods(mods, query) {
@@ -319,7 +452,158 @@ dropColumns.forEach((column) => {
   });
 });
 
+modalConfirmButton.addEventListener("click", () => {
+  if (!pendingModal) {
+    return;
+  }
+  closeModal(pendingModal.input ? modalInput.value : true);
+});
+
+modalCancelButton.addEventListener("click", () => {
+  if (!pendingModal) {
+    return;
+  }
+  closeModal(pendingModal.input ? null : false);
+});
+
+modalBackdrop.addEventListener("click", (event) => {
+  if (event.target !== modalBackdrop || !pendingModal) {
+    return;
+  }
+  closeModal(pendingModal.input ? null : false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (!pendingModal) {
+    return;
+  }
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeModal(pendingModal.input ? null : false);
+  } else if (event.key === "Enter") {
+    event.preventDefault();
+    closeModal(pendingModal.input ? modalInput.value : true);
+  }
+});
+
+async function saveCurrentPreset() {
+  if (busy) {
+    return;
+  }
+  const selectedPreset = getSelectedPreset();
+  const defaultName = selectedPreset?.name || "";
+  const name = await askPresetName(defaultName);
+  if (name === null) {
+    return;
+  }
+  const trimmedName = name.trim().replace(/\s+/g, " ");
+  if (!trimmedName) {
+    showToast("Preset name is required.", true);
+    return;
+  }
+
+  try {
+    setBusy(true);
+    const result = await window.bellwrightMods.savePreset({ name: trimmedName });
+    presets = result.presets || [];
+    renderPresets(result.preset?.id);
+    showToast(`${result.preset?.name || trimmedName} saved.`);
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function loadSelectedPreset() {
+  if (busy) {
+    return;
+  }
+  if (state?.gameRunning) {
+    showToast("Close Bellwright before loading a preset.", true);
+    return;
+  }
+
+  const preset = getSelectedPreset();
+  if (!preset) {
+    showToast("Choose a preset first.", true);
+    return;
+  }
+  if (!(await askConfirm("Load preset", `Load "${preset.name}"? Current active mods will be changed.`, "Load"))) {
+    return;
+  }
+
+  try {
+    setBusy(true);
+    const result = await window.bellwrightMods.loadPreset(preset.id);
+    state = result.state;
+    render();
+    const missingText = result.missing?.length ? ` ${result.missing.length} saved mod(s) were not found.` : "";
+    showToast(`${preset.name} loaded. ${result.changed} change(s) applied.${missingText}`.trim(), Boolean(result.missing?.length));
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function deleteSelectedPreset() {
+  if (busy) {
+    return;
+  }
+  const preset = getSelectedPreset();
+  if (!preset) {
+    showToast("Choose a preset first.", true);
+    return;
+  }
+  if (!(await askConfirm("Delete preset", `Delete "${preset.name}"?`, "Delete"))) {
+    return;
+  }
+
+  try {
+    setBusy(true);
+    presets = await window.bellwrightMods.deletePreset(preset.id);
+    renderPresets();
+    showToast(`${preset.name} deleted.`);
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function updateLauncher() {
+  if (busy) {
+    return;
+  }
+
+  try {
+    setBusy(true);
+    showUpdateProgress({ phase: "check", percent: 0, message: "Checking GitHub release..." });
+    const result = await window.bellwrightMods.updateLauncher();
+    if (result.status === "up-to-date") {
+      showToast("Launcher is up to date.");
+      hideUpdateProgressSoon();
+    } else if (result.status === "staged") {
+      showToast(`Update v${result.latestVersion} downloaded. Restart when ready.`);
+    }
+  } catch (error) {
+    showToast(error.message || String(error), true);
+    hideUpdateProgressSoon();
+  } finally {
+    setBusy(false);
+  }
+}
+
 refreshButton.addEventListener("click", loadState);
+
+presetSelect.addEventListener("change", () => setBusy(busy));
+
+savePresetButton.addEventListener("click", saveCurrentPreset);
+
+loadPresetButton.addEventListener("click", loadSelectedPreset);
+
+deletePresetButton.addEventListener("click", deleteSelectedPreset);
 
 folderButton.addEventListener("click", async () => {
   try {
@@ -361,10 +645,15 @@ discordButton.addEventListener("click", async () => {
   }
 });
 
+updateButton.addEventListener("click", updateLauncher);
+
 searchInput.addEventListener("input", render);
 
 window.addEventListener("resize", hideModTooltip);
 window.addEventListener("scroll", hideModTooltip, true);
 
+window.bellwrightMods.onUpdateProgress(showUpdateProgress);
+
 loadAppInfo();
+loadPresets();
 loadState();

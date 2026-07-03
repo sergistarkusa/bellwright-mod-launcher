@@ -16,6 +16,8 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 - Prevent mod changes while Bellwright is running.
 - Open the Bellwright mods folder.
 - Launch Bellwright through Steam.
+- Save and load named active-mod presets.
+- Update the launcher from the latest GitHub Release with visible download progress.
 - Join the Bellwright Discord section from the app.
 - Support FSD Software through Ko-fi.
 
@@ -30,6 +32,10 @@ Unzip it anywhere and run `BellwrightModLauncher.exe`.
 This is an unofficial community tool and is not affiliated with Donkey Crew, Snail Games, or Steam.
 
 The launcher moves mod folders between active and disabled locations. Close Bellwright before changing mod state.
+
+Presets store the currently active local and Workshop mods by folder/source. Loading a preset changes the active mod set to match it, so Bellwright must be closed.
+
+The update button checks the latest GitHub Release. When a newer portable ZIP is available, the launcher downloads it, stages it, then asks to restart and applies a clean folder replacement before launching the new version.
 
 ## Build From Source
 
@@ -46,4 +52,3 @@ npm run package:win
 ```
 
 The packaged ZIP is written to `release/`.
-

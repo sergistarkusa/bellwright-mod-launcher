@@ -1,7 +1,9 @@
-const { app, BrowserWindow, ipcMain, shell, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, screen, dialog } = require("electron");
+const fsNative = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
 const childProcess = require("child_process");
+const https = require("https");
 const packageInfo = require("./package.json");
 
 const GAME_APP_ID = "1812450";
@@ -20,12 +22,18 @@ const TOOLTIP_HEIGHT = 392;
 const TOOLTIP_MARGIN = 10;
 const DONATE_URL = "https://ko-fi.com/excelsiorone";
 const DISCORD_URL = "https://discord.gg/Nnqt8S2r7n";
+const GITHUB_OWNER = "sergistarkusa";
+const GITHUB_REPO = "bellwright-mod-launcher";
+const GITHUB_API_BASE = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`;
+const UPDATE_EXE_NAME = "BellwrightModLauncher.exe";
+const UPDATE_ASSET_PATTERN = /win-x64-portable\.zip$/i;
 
 let mainWindow;
 let tooltipWindow;
 let tooltipReady = false;
 let pendingTooltipMod = null;
 let cachedInstallPaths = null;
+let updateInProgress = false;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -256,6 +264,18 @@ function execFileText(file, args) {
   return new Promise((resolve) => {
     childProcess.execFile(file, args, { windowsHide: true }, (error, stdout) => {
       resolve(error ? "" : stdout);
+    });
+  });
+}
+
+function execFileChecked(file, args) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(file, args, { windowsHide: true }, (error, stdout, stderr) => {
+      if (error) {
+        reject(new Error((stderr || stdout || error.message).trim()));
+        return;
+      }
+      resolve(stdout);
     });
   });
 }
@@ -619,18 +639,563 @@ async function enableMod(payload) {
   return getState();
 }
 
+function getPresetPath() {
+  return path.join(app.getPath("userData"), "presets.json");
+}
+
+function modKeyFromParts(source, folderName) {
+  return `${source || "local"}:${folderName}`;
+}
+
+function modKey(mod) {
+  return modKeyFromParts(mod.source, mod.folderName);
+}
+
+function normalizePresetName(name) {
+  return String(name || "").trim().replace(/\s+/g, " ");
+}
+
+function createPresetId(name) {
+  const slug = normalizePresetName(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40);
+  return `${slug || "preset"}-${Date.now().toString(36)}`;
+}
+
+function publicPreset(preset) {
+  return {
+    id: preset.id,
+    name: preset.name,
+    createdAt: preset.createdAt,
+    updatedAt: preset.updatedAt,
+    activeCount: preset.activeMods.length,
+    activeMods: preset.activeMods
+  };
+}
+
+async function readPresetStore() {
+  const store = (await readJson(getPresetPath())) || {};
+  const presets = Array.isArray(store.presets) ? store.presets : [];
+  return {
+    version: 1,
+    presets: presets
+      .filter((preset) => preset && preset.id && preset.name && Array.isArray(preset.activeMods))
+      .map((preset) => ({
+        id: String(preset.id),
+        name: String(preset.name),
+        createdAt: preset.createdAt || new Date().toISOString(),
+        updatedAt: preset.updatedAt || preset.createdAt || new Date().toISOString(),
+        activeMods: preset.activeMods
+          .filter((mod) => mod?.folderName)
+          .map((mod) => ({
+            source: mod.source || "local",
+            folderName: mod.folderName,
+            displayFolderName: mod.displayFolderName || mod.folderName,
+            title: mod.title || mod.displayFolderName || mod.folderName,
+            workshopId: mod.workshopId || null
+          }))
+      }))
+  };
+}
+
+async function writePresetStore(store) {
+  await ensureDirectory(path.dirname(getPresetPath()));
+  await fs.writeFile(getPresetPath(), `${JSON.stringify(store, null, 2)}\n`, "utf8");
+}
+
+async function listPresets() {
+  const store = await readPresetStore();
+  return store.presets
+    .map(publicPreset)
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+}
+
+async function savePreset(payload) {
+  const name = normalizePresetName(typeof payload === "string" ? payload : payload?.name);
+  if (!name) {
+    throw new Error("Preset name is required.");
+  }
+
+  const store = await readPresetStore();
+  const now = new Date().toISOString();
+  const state = await getState();
+  const activeMods = state.mods
+    .filter((mod) => mod.status === "active")
+    .map((mod) => ({
+      source: mod.source,
+      folderName: mod.folderName,
+      displayFolderName: mod.displayFolderName,
+      title: mod.title,
+      workshopId: mod.workshopId || null
+    }))
+    .sort((a, b) => modKey(a).localeCompare(modKey(b)));
+
+  const existing = store.presets.find((preset) => preset.name.toLowerCase() === name.toLowerCase());
+  const preset = {
+    id: existing?.id || createPresetId(name),
+    name,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    activeMods
+  };
+
+  if (existing) {
+    Object.assign(existing, preset);
+  } else {
+    store.presets.push(preset);
+  }
+
+  await writePresetStore(store);
+  return {
+    preset: publicPreset(preset),
+    presets: await listPresets()
+  };
+}
+
+async function deletePreset(id) {
+  const store = await readPresetStore();
+  const before = store.presets.length;
+  store.presets = store.presets.filter((preset) => preset.id !== id);
+  if (store.presets.length === before) {
+    throw new Error("Preset was not found.");
+  }
+  await writePresetStore(store);
+  return listPresets();
+}
+
+async function loadPreset(id) {
+  await assertGameClosed();
+  const store = await readPresetStore();
+  const preset = store.presets.find((candidate) => candidate.id === id);
+  if (!preset) {
+    throw new Error("Preset was not found.");
+  }
+
+  let currentState = await getState();
+  const targetKeys = new Set(preset.activeMods.map(modKey));
+  const currentKeys = new Set(currentState.mods.map(modKey));
+  const missing = preset.activeMods.filter((savedMod) => !currentKeys.has(modKey(savedMod)));
+  let changed = 0;
+
+  for (const mod of currentState.mods.filter((candidate) => candidate.status === "active" && !targetKeys.has(modKey(candidate)))) {
+    currentState = await disableMod({ folderName: mod.folderName, source: mod.source });
+    changed += 1;
+  }
+
+  currentState = await getState();
+  const activeKeys = new Set(currentState.mods.filter((mod) => mod.status === "active").map(modKey));
+
+  for (const savedMod of preset.activeMods) {
+    const key = modKey(savedMod);
+    if (activeKeys.has(key)) {
+      continue;
+    }
+    const candidate = currentState.mods.find((mod) => modKey(mod) === key);
+    if (!candidate || candidate.status !== "disabled") {
+      continue;
+    }
+    currentState = await enableMod({
+      folderName: candidate.folderName,
+      sourceRoot: candidate.sourceRoot,
+      source: candidate.source
+    });
+    activeKeys.add(key);
+    changed += 1;
+  }
+
+  return {
+    preset: publicPreset(preset),
+    state: await getState(),
+    changed,
+    missing
+  };
+}
+
+function sendUpdateProgress(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("app:updateProgress", payload);
+  }
+}
+
+function normalizeVersion(version) {
+  return String(version || "").trim().replace(/^v/i, "");
+}
+
+function parseVersionParts(version) {
+  const [core] = normalizeVersion(version).split("-");
+  return core.split(".").map((part) => {
+    const parsed = Number.parseInt(part, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  });
+}
+
+function compareVersions(left, right) {
+  const leftParts = parseVersionParts(left);
+  const rightParts = parseVersionParts(right);
+  const length = Math.max(leftParts.length, rightParts.length, 3);
+  for (let index = 0; index < length; index += 1) {
+    const leftPart = leftParts[index] || 0;
+    const rightPart = rightParts[index] || 0;
+    if (leftPart !== rightPart) {
+      return leftPart > rightPart ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+function requestJson(url) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(
+      url,
+      {
+        headers: {
+          "User-Agent": `${packageInfo.name}/${packageInfo.version}`,
+          Accept: "application/vnd.github+json"
+        }
+      },
+      (response) => {
+        if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+          response.resume();
+          requestJson(response.headers.location).then(resolve, reject);
+          return;
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          response.resume();
+          reject(new Error(`GitHub returned HTTP ${response.statusCode}.`));
+          return;
+        }
+
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => {
+          try {
+            resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      }
+    );
+    request.on("error", reject);
+    request.setTimeout(30000, () => {
+      request.destroy(new Error("GitHub request timed out."));
+    });
+  });
+}
+
+function downloadFile(url, targetPath, onProgress) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(
+      url,
+      {
+        headers: {
+          "User-Agent": `${packageInfo.name}/${packageInfo.version}`
+        }
+      },
+      (response) => {
+        if ([301, 302, 303, 307, 308].includes(response.statusCode) && response.headers.location) {
+          response.resume();
+          downloadFile(response.headers.location, targetPath, onProgress).then(resolve, reject);
+          return;
+        }
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          response.resume();
+          reject(new Error(`Download returned HTTP ${response.statusCode}.`));
+          return;
+        }
+
+        const total = Number.parseInt(response.headers["content-length"] || "0", 10) || 0;
+        let transferred = 0;
+        const file = fsNative.createWriteStream(targetPath);
+
+        response.on("data", (chunk) => {
+          transferred += chunk.length;
+          onProgress?.({
+            phase: "download",
+            transferred,
+            total,
+            percent: total ? Math.round((transferred / total) * 100) : null,
+            message: total ? "Downloading update..." : "Downloading update..."
+          });
+        });
+
+        file.on("finish", () => {
+          file.close(resolve);
+        });
+        file.on("error", reject);
+        response.on("error", reject);
+        response.pipe(file);
+      }
+    );
+    request.on("error", reject);
+    request.setTimeout(120000, () => {
+      request.destroy(new Error("Update download timed out."));
+    });
+  });
+}
+
+function findUpdateAsset(release) {
+  const assets = Array.isArray(release.assets) ? release.assets : [];
+  return (
+    assets.find((asset) => UPDATE_ASSET_PATTERN.test(asset.name || "")) ||
+    assets.find((asset) => /\.zip$/i.test(asset.name || ""))
+  );
+}
+
+async function fetchLatestRelease() {
+  return requestJson(`${GITHUB_API_BASE}/releases/latest`);
+}
+
+async function expandZip(zipPath, destinationPath) {
+  await fs.rm(destinationPath, { recursive: true, force: true });
+  await ensureDirectory(destinationPath);
+  await execFileChecked("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    "& { param($zip, $destination) Expand-Archive -LiteralPath $zip -DestinationPath $destination -Force }",
+    zipPath,
+    destinationPath
+  ]);
+}
+
+async function findStagedAppRoot(extractedRoot) {
+  const candidates = [extractedRoot];
+  const entries = await fs.readdir(extractedRoot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      candidates.push(path.join(extractedRoot, entry.name));
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (
+      (await exists(path.join(candidate, UPDATE_EXE_NAME))) &&
+      (await exists(path.join(candidate, "resources", "app", "package.json")))
+    ) {
+      return candidate;
+    }
+  }
+  throw new Error("The downloaded ZIP does not contain a valid BellwrightModLauncher.exe package.");
+}
+
+function getInstallDirectory() {
+  return path.dirname(process.execPath);
+}
+
+function getUpdaterScriptText() {
+  return String.raw`param(
+  [Parameter(Mandatory=$true)][string]$InstallDir,
+  [Parameter(Mandatory=$true)][string]$StagedAppDir,
+  [Parameter(Mandatory=$true)][string]$ExeName,
+  [Parameter(Mandatory=$true)][int]$ProcessId,
+  [Parameter(Mandatory=$true)][string]$LogPath
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+function Write-UpdateLog([string]$Message) {
+  $line = "$(Get-Date -Format o) $Message"
+  Add-Content -LiteralPath $LogPath -Value $line
+}
+
+try {
+  $install = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+  $staged = [System.IO.Path]::GetFullPath($StagedAppDir).TrimEnd('\')
+  $driveRoot = [System.IO.Path]::GetPathRoot($install).TrimEnd('\')
+
+  Write-UpdateLog "Starting update. Install=$install Staged=$staged"
+
+  if ($install -eq $driveRoot) {
+    throw "Refusing to update a drive root."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $install $ExeName))) {
+    throw "Install folder does not contain $ExeName."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $staged $ExeName))) {
+    throw "Staged update does not contain $ExeName."
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $staged "resources\app\package.json"))) {
+    throw "Staged update is missing resources\app\package.json."
+  }
+
+  try {
+    Wait-Process -Id $ProcessId -Timeout 45
+  } catch {
+    Write-UpdateLog "Process wait ended: $($_.Exception.Message)"
+  }
+
+  Start-Sleep -Milliseconds 700
+
+  $parent = Split-Path -Parent $install
+  $leaf = Split-Path -Leaf $install
+  $backupLeaf = "$leaf.old-$(Get-Date -Format yyyyMMddHHmmss)"
+  $backup = Join-Path $parent $backupLeaf
+
+  Rename-Item -LiteralPath $install -NewName $backupLeaf
+  New-Item -ItemType Directory -Path $install | Out-Null
+
+  try {
+    $items = Get-ChildItem -LiteralPath $staged -Force
+    if ($items.Count -eq 0) {
+      throw "Staged update folder is empty."
+    }
+    $items | Copy-Item -Destination $install -Recurse -Force
+  } catch {
+    Remove-Item -LiteralPath $install -Recurse -Force -ErrorAction SilentlyContinue
+    Rename-Item -LiteralPath $backup -NewName $leaf
+    throw
+  }
+
+  $exePath = Join-Path $install $ExeName
+  Start-Process -FilePath $exePath -WorkingDirectory $install
+  Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
+  Write-UpdateLog "Update applied and launcher restarted."
+} catch {
+  Write-UpdateLog "Update failed: $($_.Exception.Message)"
+}`;
+}
+
+async function writeUpdaterScript(updateRoot) {
+  const scriptPath = path.join(updateRoot, "apply-update.ps1");
+  await fs.writeFile(scriptPath, getUpdaterScriptText(), "utf8");
+  return scriptPath;
+}
+
+async function startUpdaterAndQuit(stagedAppRoot, updateRoot) {
+  const installDir = getInstallDirectory();
+  const scriptPath = await writeUpdaterScript(updateRoot);
+  const logPath = path.join(updateRoot, "apply-update.log");
+  const child = childProcess.spawn(
+    "powershell.exe",
+    [
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      scriptPath,
+      "-InstallDir",
+      installDir,
+      "-StagedAppDir",
+      stagedAppRoot,
+      "-ExeName",
+      UPDATE_EXE_NAME,
+      "-ProcessId",
+      String(process.pid),
+      "-LogPath",
+      logPath
+    ],
+    {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true
+    }
+  );
+  child.unref();
+  app.quit();
+}
+
+async function updateLauncher() {
+  if (updateInProgress) {
+    throw new Error("An update is already in progress.");
+  }
+  updateInProgress = true;
+
+  try {
+    sendUpdateProgress({ phase: "check", percent: 0, message: "Checking GitHub release..." });
+    const release = await fetchLatestRelease();
+    const latestVersion = normalizeVersion(release.tag_name || release.name || "");
+    if (!latestVersion) {
+      throw new Error("Latest GitHub release does not have a version tag.");
+    }
+
+    if (compareVersions(latestVersion, packageInfo.version) <= 0) {
+      sendUpdateProgress({ phase: "done", percent: 100, message: "Launcher is up to date." });
+      return { status: "up-to-date", currentVersion: packageInfo.version, latestVersion };
+    }
+
+    if (!app.isPackaged) {
+      throw new Error("Auto-update can only be applied from the packaged launcher, not the development copy.");
+    }
+
+    const asset = findUpdateAsset(release);
+    if (!asset?.browser_download_url) {
+      throw new Error(`Release v${latestVersion} does not include a Windows portable ZIP.`);
+    }
+
+    const updateRoot = path.join(app.getPath("userData"), "updates", latestVersion);
+    const zipPath = path.join(updateRoot, asset.name || `BellwrightModLauncher-v${latestVersion}.zip`);
+    const extractedRoot = path.join(updateRoot, "extracted");
+    await fs.rm(updateRoot, { recursive: true, force: true });
+    await ensureDirectory(updateRoot);
+
+    sendUpdateProgress({ phase: "download", percent: 0, message: `Downloading v${latestVersion}...` });
+    await downloadFile(asset.browser_download_url, zipPath, sendUpdateProgress);
+
+    sendUpdateProgress({ phase: "extract", percent: 100, message: "Preparing update..." });
+    await expandZip(zipPath, extractedRoot);
+    const stagedAppRoot = await findStagedAppRoot(extractedRoot);
+
+    sendUpdateProgress({ phase: "ready", percent: 100, message: "Update downloaded." });
+    const choice = await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      buttons: ["OK", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "Restart to apply update",
+      message: "Update downloaded. Restart to apply update?",
+      detail: `Bellwright Mod Launcher v${latestVersion} is ready.`
+    });
+
+    if (choice.response === 0) {
+      await startUpdaterAndQuit(stagedAppRoot, updateRoot);
+      return { status: "restarting", latestVersion };
+    }
+
+    return { status: "staged", latestVersion };
+  } finally {
+    updateInProgress = false;
+  }
+}
+
 function getAppInfo() {
   return {
     maker: "FSD Software",
     version: packageInfo.version,
     donateUrl: DONATE_URL,
-    discordUrl: DISCORD_URL
+    discordUrl: DISCORD_URL,
+    updateSupported: app.isPackaged,
+    updateRepo: `${GITHUB_OWNER}/${GITHUB_REPO}`
   };
 }
 
 ipcMain.handle("mods:getState", getState);
 
 ipcMain.handle("app:getInfo", getAppInfo);
+
+ipcMain.handle("presets:list", async () => {
+  return listPresets();
+});
+
+ipcMain.handle("presets:save", async (_event, payload) => {
+  return savePreset(payload);
+});
+
+ipcMain.handle("presets:load", async (_event, id) => {
+  return loadPreset(id);
+});
+
+ipcMain.handle("presets:delete", async (_event, id) => {
+  return deletePreset(id);
+});
+
+ipcMain.handle("app:updateLauncher", async () => {
+  return updateLauncher();
+});
 
 ipcMain.handle("mods:disable", async (_event, payload) => {
   return disableMod(payload);

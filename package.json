@@ -1,8 +1,16 @@
 {
   "name": "bellwright-mod-launcher",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Small local mod launcher for Bellwright.",
   "main": "main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sergistarkusa/bellwright-mod-launcher.git"
+  },
+  "homepage": "https://github.com/sergistarkusa/bellwright-mod-launcher#readme",
+  "bugs": {
+    "url": "https://github.com/sergistarkusa/bellwright-mod-launcher/issues"
+  },
   "scripts": {
     "start": "electron .",
     "package:win": "powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1"
