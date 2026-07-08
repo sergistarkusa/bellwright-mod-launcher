@@ -12,11 +12,16 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 ## Features
 
 - Manage local Bellwright mods and subscribed Steam Workshop mods.
-- Keep disabled Workshop mods in a reversible launcher-managed folder.
+- Keep disabled local and Workshop mods in reversible launcher-managed folders.
+- Keep Workshop mods disabled after Steam downloads an updated copy, replacing the stale disabled files with the update.
 - Prevent mod changes while Bellwright is running.
+- Refresh the running/closed game state automatically.
 - Open the Bellwright mods folder.
 - Launch Bellwright through Steam.
-- Save and load named active-mod presets.
+- Save and load named active-mod presets, including load order.
+- Share presets as compact `BWL1` codes and preview imported mod availability before saving.
+- Change active mod load priority through Bellwright's `modloadorder.json`.
+- Show active mod conflicts from shared assets listed in `modinfo.json`.
 - Update the launcher from the latest GitHub Release with visible download progress.
 - Join the Bellwright Discord section from the app.
 - Support FSD Software through Ko-fi.
@@ -27,13 +32,17 @@ Use the latest Windows portable ZIP from the GitHub Releases page.
 
 Unzip it anywhere and run `BellwrightModLauncher.exe`.
 
+See [CHANGELOG.md](CHANGELOG.md) for release details.
+
 ## Notes
 
 This is an unofficial community tool and is not affiliated with Donkey Crew, Snail Games, or Steam.
 
-The launcher moves mod folders between active and disabled locations. Close Bellwright before changing mod state.
+The launcher moves mod folders between active and disabled locations, updates `modinfo.json` active flags when possible, and keeps disabled local mods outside `Content/Mods` so Bellwright does not mount them accidentally. Close Bellwright before changing mod state or load order.
 
-Presets store the currently active local and Workshop mods by folder/source. Loading a preset changes the active mod set to match it, so Bellwright must be closed.
+Presets store the currently active local and Workshop mods by folder/source and load order. Loading a preset changes the active mod set and priority order to match it, so Bellwright must be closed.
+
+Conflict details are based on the asset metadata supplied by each mod's `modinfo.json`. They identify likely asset-level conflicts, but they cannot prove every possible gameplay or Blueprint logic conflict.
 
 The update button checks the latest GitHub Release. When a newer portable ZIP is available, the launcher downloads it, stages it, then asks to restart and applies a clean folder replacement before launching the new version.
 

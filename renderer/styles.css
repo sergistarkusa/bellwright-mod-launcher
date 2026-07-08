@@ -18,15 +18,89 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   margin: 0;
   min-width: 860px;
-  overflow-x: hidden;
   background:
     linear-gradient(150deg, rgba(217, 180, 95, 0.16), transparent 34%),
     radial-gradient(circle at 88% 10%, rgba(127, 176, 164, 0.14), transparent 30%),
     var(--bg);
   color: var(--text);
+}
+
+.windowTitlebar {
+  position: relative;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding-left: 13px;
+  background: #151817;
+  border-bottom: 1px solid #2b312f;
+  color: #c9cec9;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.windowIdentity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.windowIdentity svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.windowControls {
+  display: flex;
+  align-self: stretch;
+  -webkit-app-region: no-drag;
+}
+
+.windowControlButton {
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  color: #c9cec9;
+}
+
+.windowControlButton svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 1.7;
+}
+
+.windowControlButton:hover {
+  background: #2a302d;
+  color: var(--text);
+}
+
+.windowControlButton.close:hover {
+  background: #b94a43;
+  color: #ffffff;
+}
+
+.windowControlButton:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: -2px;
 }
 
 button,
@@ -52,7 +126,7 @@ svg {
 
 .shell {
   width: min(1240px, calc(100vw - 44px));
-  margin: 22px auto;
+  margin: 16px auto 22px;
 }
 
 .topbar,
@@ -218,8 +292,8 @@ p {
   align-items: center;
   gap: 7px;
   min-height: 44px;
-  flex: 0 1 438px;
-  min-width: 310px;
+  flex: 0 1 510px;
+  min-width: 390px;
   padding: 0 6px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -394,6 +468,29 @@ p {
   margin-top: 14px;
 }
 
+.severity {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.severity.high {
+  color: #2a100b;
+  background: var(--danger);
+}
+
+.severity.medium {
+  color: #221804;
+  background: var(--accent);
+}
+
+.severity.low {
+  color: #081719;
+  background: var(--accent-2);
+}
+
 .modColumn {
   min-width: 0;
   min-height: 360px;
@@ -485,11 +582,12 @@ p {
   align-items: center;
   min-width: 0;
   justify-content: flex-start;
-  gap: 12px;
+  gap: 8px;
   margin: 0;
 }
 
 .modTitle {
+  flex: 1 1 auto;
   min-width: 0;
 }
 
@@ -531,6 +629,58 @@ p {
   background: var(--accent-2);
 }
 
+.loadOrderBadge {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(217, 180, 95, 0.48);
+  border-radius: 8px;
+  color: var(--accent);
+  background: #141716;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.conflictBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 32px;
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 999px;
+  color: #221804;
+  background: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.conflictBadge:hover,
+.conflictBadge:focus-visible {
+  filter: brightness(1.08);
+  outline: 1px solid rgba(243, 239, 229, 0.44);
+}
+
+.conflictBadge.high {
+  color: #2a100b;
+  background: var(--danger);
+}
+
+.conflictBadge.low {
+  color: #081719;
+  background: var(--accent-2);
+}
+
+.conflictBadge svg {
+  width: 13px;
+  height: 13px;
+}
+
 .description {
   display: none;
 }
@@ -549,7 +699,36 @@ p {
 }
 
 .cardActions {
-  display: contents;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.orderControls {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.orderButton {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #222725;
+  color: var(--muted);
+}
+
+.orderButton:hover:not(:disabled) {
+  background: #2a302d;
+  color: var(--text);
+}
+
+.orderButton svg {
+  width: 15px;
+  height: 15px;
 }
 
 .toggleButton {
@@ -589,7 +768,8 @@ p {
   color: #d9ffd4;
 }
 
-.toggleButton:disabled {
+.toggleButton:disabled,
+.orderButton:disabled {
   cursor: not-allowed;
   opacity: 0.48;
 }
@@ -615,6 +795,116 @@ p {
   border-color: rgba(209, 116, 99, 0.6);
 }
 
+.conflictTooltip {
+  position: fixed;
+  z-index: 30;
+  width: min(380px, calc(100vw - 28px));
+  max-height: min(460px, calc(100vh - 28px));
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(20, 23, 22, 0.98);
+  color: var(--text);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+.conflictTooltip[hidden] {
+  display: none;
+}
+
+.conflictTooltipHeader {
+  margin-bottom: 9px;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.conflictTooltipItem {
+  display: grid;
+  gap: 7px;
+  padding: 9px;
+  border: 1px solid rgba(49, 57, 54, 0.86);
+  border-radius: 8px;
+  background: rgba(32, 37, 34, 0.72);
+}
+
+.conflictTooltipItem + .conflictTooltipItem {
+  margin-top: 8px;
+}
+
+.conflictTooltipItem.high {
+  border-color: rgba(209, 116, 99, 0.72);
+}
+
+.conflictTooltipItem.medium {
+  border-color: rgba(217, 180, 95, 0.62);
+}
+
+.conflictTooltipTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.conflictTooltipTitle strong {
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.conflictTooltipMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.conflictTooltipMeta span {
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+  background: #0f1110;
+  font-size: 10px;
+}
+
+.conflictTooltip ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.conflictTooltip li {
+  display: grid;
+  gap: 3px;
+  padding: 7px;
+  border-radius: 7px;
+  background: rgba(15, 17, 16, 0.68);
+}
+
+.conflictTooltip li strong {
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.conflictTooltip li span,
+.conflictTooltipMore,
+.conflictTooltip .moreAssets {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.conflictTooltipMore {
+  margin: 8px 0 0;
+}
+
 .modalBackdrop {
   position: fixed;
   inset: 0;
@@ -636,6 +926,215 @@ p {
   border-radius: 8px;
   background: #191c1b;
   box-shadow: 0 20px 58px rgba(0, 0, 0, 0.48);
+}
+
+.shareModalPanel {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 44px);
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #191c1b;
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.48);
+}
+
+.shareModalHeader,
+.sharePreviewSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.shareModalHeader {
+  margin-bottom: 14px;
+}
+
+.shareModalHeader h2 {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.modalCloseButton {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border-radius: 8px;
+  background: #222725;
+  color: var(--muted);
+}
+
+.modalCloseButton:hover {
+  background: #303633;
+  color: var(--text);
+}
+
+.modalCloseButton svg {
+  width: 16px;
+  height: 16px;
+}
+
+.shareCodeInput {
+  width: 100%;
+  min-height: 84px;
+  max-height: 150px;
+  margin-bottom: 14px;
+  padding: 10px 11px;
+  resize: none;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  outline: none;
+  background: #0f1110;
+  color: var(--text);
+  font: 12px/1.45 Consolas, "Courier New", monospace;
+}
+
+.shareCodeInput:focus {
+  border-color: rgba(127, 176, 164, 0.72);
+}
+
+.sharePreview {
+  margin-bottom: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.sharePreview[hidden] {
+  display: none;
+}
+
+.sharePreviewSummary {
+  margin-bottom: 10px;
+}
+
+.sharePreviewSummary > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.sharePreviewSummary strong {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sharePreviewSummary span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sharePreviewWarning {
+  flex: 0 0 auto;
+  padding: 5px 8px;
+  border: 1px solid rgba(217, 180, 95, 0.46);
+  border-radius: 8px;
+  background: rgba(217, 180, 95, 0.12);
+  color: var(--accent) !important;
+  font-weight: 700;
+}
+
+.shareModList {
+  display: grid;
+  gap: 5px;
+  max-height: min(360px, 42vh);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.shareModList::-webkit-scrollbar {
+  display: none;
+}
+
+.shareModRow {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #141716;
+}
+
+.shareModOrder {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border: 1px solid rgba(217, 180, 95, 0.38);
+  border-radius: 8px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.shareModIdentity {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.shareModIdentity strong,
+.shareModIdentity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shareModIdentity strong {
+  font-size: 12px;
+}
+
+.shareModIdentity span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.shareModStatus {
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: rgba(127, 176, 164, 0.18);
+  color: var(--accent-2);
+  font-size: 10px;
+  font-weight: 760;
+  white-space: nowrap;
+}
+
+.shareModStatus.missing {
+  background: rgba(217, 180, 95, 0.14);
+  color: var(--accent);
+}
+
+.openWorkshopButton {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #222725;
+  color: var(--muted);
+}
+
+.openWorkshopButton:hover {
+  border-color: #52605a;
+  color: var(--text);
+}
+
+.openWorkshopButton svg {
+  width: 14px;
+  height: 14px;
 }
 
 .modalPanel h2 {

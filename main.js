@@ -1,9 +1,10 @@
-const { app, BrowserWindow, ipcMain, shell, screen, dialog } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, screen, dialog, clipboard } = require("electron");
 const fsNative = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
 const childProcess = require("child_process");
 const https = require("https");
+const zlib = require("zlib");
 const packageInfo = require("./package.json");
 
 const GAME_APP_ID = "1812450";
@@ -11,6 +12,9 @@ const DEFAULT_STEAM_ROOT = path.join(process.env["ProgramFiles(x86)"] || "C:\\Pr
 const DEFAULT_GAME_ROOT = path.join(DEFAULT_STEAM_ROOT, "steamapps", "common", "Bellwright", "Bellwright");
 const DISABLED_FOLDER_NAME = "_disabled_by_bellwright_launcher";
 const LEGACY_DISABLED_FOLDER_NAME = "_disabled_for_runtime_scoped_test";
+const MOD_LOAD_ORDER_FILE = "modloadorder.json";
+const LOAD_ORDER_BASE_PRIORITY = 100000;
+const MAX_CONFLICT_ASSETS = 80;
 const GAME_PROCESS_NAMES = new Set([
   "Bellwright.exe",
   "BellwrightGame.exe",
@@ -27,6 +31,10 @@ const GITHUB_REPO = "bellwright-mod-launcher";
 const GITHUB_API_BASE = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}`;
 const UPDATE_EXE_NAME = "BellwrightModLauncher.exe";
 const UPDATE_ASSET_PATTERN = /win-x64-portable\.zip$/i;
+const PRESET_SHARE_PREFIX = "BWL1:";
+const MAX_SHARE_CODE_LENGTH = 100000;
+const MAX_SHARED_PRESET_BYTES = 1024 * 1024;
+const MAX_SHARED_MODS = 500;
 
 let mainWindow;
 let tooltipWindow;
@@ -34,6 +42,9 @@ let tooltipReady = false;
 let pendingTooltipMod = null;
 let cachedInstallPaths = null;
 let updateInProgress = false;
+let gameRunningPollTimer = null;
+let gameRunningPollInFlight = false;
+let lastKnownGameRunning = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -59,6 +70,8 @@ function createWindow() {
     minHeight: 640,
     backgroundColor: "#101111",
     title: "Bellwright Mod Launcher",
+    frame: false,
+    hasShadow: true,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -215,7 +228,41 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(value, max));
 }
 
-app.whenReady().then(createWindow);
+async function pollGameRunning() {
+  if (gameRunningPollInFlight) {
+    return;
+  }
+  gameRunningPollInFlight = true;
+  try {
+    const gameRunning = await getGameRunning();
+    if (lastKnownGameRunning !== null && gameRunning !== lastKnownGameRunning && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("mods:gameRunningChanged", gameRunning);
+    }
+    lastKnownGameRunning = gameRunning;
+  } finally {
+    gameRunningPollInFlight = false;
+  }
+}
+
+function startGameRunningWatcher() {
+  if (gameRunningPollTimer) {
+    return;
+  }
+  pollGameRunning();
+  gameRunningPollTimer = setInterval(pollGameRunning, 2000);
+}
+
+app.whenReady().then(() => {
+  createWindow();
+  startGameRunningWatcher();
+});
+
+app.on("before-quit", () => {
+  if (gameRunningPollTimer) {
+    clearInterval(gameRunningPollTimer);
+    gameRunningPollTimer = null;
+  }
+});
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
@@ -376,9 +423,10 @@ async function getInstallPaths() {
     gameRoot,
     modsRoot,
     workshopRoot,
-    disabledRoot: path.join(modsRoot, DISABLED_FOLDER_NAME),
+    disabledRoot: path.join(gameRoot, "Content", DISABLED_FOLDER_NAME),
     workshopDisabledRoot: path.join(workshopRoot, DISABLED_FOLDER_NAME),
-    legacyDisabledRoot: path.join(modsRoot, LEGACY_DISABLED_FOLDER_NAME)
+    legacyDisabledRoot: path.join(modsRoot, DISABLED_FOLDER_NAME),
+    legacyRuntimeDisabledRoot: path.join(modsRoot, LEGACY_DISABLED_FOLDER_NAME)
   };
   return cachedInstallPaths;
 }
@@ -391,6 +439,33 @@ async function listDirectories(directory) {
   return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
 }
 
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((entry) => typeof entry === "string" && entry.trim()).map((entry) => entry.trim());
+}
+
+function normalizeSteamId(value) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0;
+}
+
+function getObjectKeys(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
+}
+
+function normalizeAssetHashes(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([asset, hash]) => typeof asset === "string" && asset.trim() && typeof hash === "string" && hash.trim())
+      .map(([asset, hash]) => [asset.trim(), hash.trim()])
+  );
+}
+
 async function describeMod(folderPath, status, sourceRoot = null, options = {}) {
   const folderName = path.basename(folderPath);
   const modInfo = await readJson(path.join(folderPath, "modinfo.json"));
@@ -398,6 +473,10 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
   const packageFiles = files.filter((file) => /\.(pak|sig|ucas|utoc)$/i.test(file));
   const title = modInfo?.title || modInfo?.folderName || folderName;
   const displayFolderName = modInfo?.folderName || folderName;
+  const modName = modInfo?.folderName || folderName;
+  const steamId = normalizeSteamId(modInfo?.steamId || options.workshopId || 0);
+  const workshopId = options.workshopId || (steamId ? String(steamId) : null);
+  const assetsToCook = getObjectKeys(modInfo?.assetsToCook);
   const version = modInfo?.version
     ? [modInfo.version.Main, modInfo.version.Major, modInfo.version.Minor, modInfo.version.Micro]
         .filter((part) => part !== undefined)
@@ -407,6 +486,7 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
   return {
     folderName,
     displayFolderName,
+    modName,
     title,
     description: modInfo?.description || "No description in modinfo.json.",
     author: modInfo?.author || "Unknown",
@@ -416,9 +496,23 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
     sourceRoot,
     source: options.source || "local",
     sourceLabel: options.sourceLabel || "Local",
-    workshopId: options.workshopId || null,
+    steamId,
+    workshopId,
+    activeFlag: typeof modInfo?.active === "boolean" ? modInfo.active : null,
     packageCount: packageFiles.length,
     hasModInfo: Boolean(modInfo),
+    modDependencies: normalizeStringArray(modInfo?.modDependencies),
+    assetsToCook,
+    createdAssets: normalizeStringArray(modInfo?.createdAssets),
+    modifiedAssets: normalizeStringArray(modInfo?.modifiedAssets),
+    deletedAssets: normalizeStringArray(modInfo?.deletedAssets),
+    referencingAssets: normalizeStringArray(modInfo?.referencingAssets),
+    referencingAssetsToNotCook: normalizeStringArray(modInfo?.referencingAssetsToNotCook),
+    assetHashes: normalizeAssetHashes(modInfo?.assetHashes),
+    modHash: modInfo?.modHash || null,
+    modKitVersion: modInfo?.modKitVersion || null,
+    gameVersion: modInfo?.gameVersion || null,
+    enforceSameMods: modInfo?.enforceSameMods || "",
     path: folderPath
   };
 }
@@ -443,12 +537,342 @@ async function getGameRunning() {
   });
 }
 
+function getLocalAppDataPath() {
+  return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || app.getPath("home"), "AppData", "Local");
+}
+
+function getModLoadOrderPath() {
+  return path.join(getLocalAppDataPath(), "Bellwright", "Saved", "Config", MOD_LOAD_ORDER_FILE);
+}
+
+function modLoadOrderKeyFromParts(name, steamId) {
+  return `${String(name || "").trim().toLowerCase()}:${normalizeSteamId(steamId)}`;
+}
+
+function modLoadOrderKeyFromEntry(entry) {
+  return modLoadOrderKeyFromParts(entry?.name, entry?.steamId);
+}
+
+function modLoadOrderKeyFromMod(mod) {
+  return modLoadOrderKeyFromParts(mod?.modName || mod?.displayFolderName || mod?.folderName, mod?.steamId || mod?.workshopId || 0);
+}
+
+function modLoadOrderEntryFromMod(mod) {
+  return {
+    name: mod.modName || mod.displayFolderName || mod.folderName,
+    steamId: normalizeSteamId(mod.steamId || mod.workshopId || 0)
+  };
+}
+
+async function readModLoadOrder() {
+  const store = (await readJson(getModLoadOrderPath())) || {};
+  const entries = Array.isArray(store.modLoadOrder) ? store.modLoadOrder : [];
+  return entries
+    .filter((entry) => entry && typeof entry.name === "string" && entry.name.trim())
+    .map((entry) => ({
+      name: entry.name.trim(),
+      steamId: normalizeSteamId(entry.steamId)
+    }));
+}
+
+async function writeModLoadOrder(entries) {
+  const cleanEntries = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    if (!entry?.name) {
+      continue;
+    }
+    const cleanEntry = {
+      name: String(entry.name).trim(),
+      steamId: normalizeSteamId(entry.steamId)
+    };
+    const key = modLoadOrderKeyFromEntry(cleanEntry);
+    if (!cleanEntry.name || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    cleanEntries.push(cleanEntry);
+  }
+  const filePath = getModLoadOrderPath();
+  await ensureDirectory(path.dirname(filePath));
+  await fs.writeFile(filePath, `${JSON.stringify({ modLoadOrder: cleanEntries }, null, "\t")}\n`, "utf8");
+}
+
+function loadOrderEntriesEqual(left, right) {
+  if (left.length !== right.length) {
+    return false;
+  }
+  return left.every((entry, index) => modLoadOrderKeyFromEntry(entry) === modLoadOrderKeyFromEntry(right[index]));
+}
+
+async function normalizeModLoadOrder(activeMods, existingEntries = null) {
+  const entries = existingEntries || (await readModLoadOrder());
+  const activeByOrderKey = new Map(activeMods.map((mod) => [modLoadOrderKeyFromMod(mod), mod]));
+  const seen = new Set();
+  const normalized = [];
+
+  for (const entry of entries) {
+    const key = modLoadOrderKeyFromEntry(entry);
+    const mod = activeByOrderKey.get(key);
+    if (!mod || seen.has(key)) {
+      continue;
+    }
+    normalized.push(modLoadOrderEntryFromMod(mod));
+    seen.add(key);
+  }
+
+  const missing = activeMods
+    .filter((mod) => !seen.has(modLoadOrderKeyFromMod(mod)))
+    .sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+  for (const mod of missing) {
+    normalized.push(modLoadOrderEntryFromMod(mod));
+  }
+
+  if (!loadOrderEntriesEqual(entries, normalized)) {
+    await writeModLoadOrder(normalized);
+    return { entries: normalized, changed: true };
+  }
+  return { entries, changed: false };
+}
+
+function getLoadOrderMap(entries) {
+  const map = new Map();
+  entries.forEach((entry, index) => {
+    const key = modLoadOrderKeyFromEntry(entry);
+    if (!map.has(key)) {
+      map.set(key, index);
+    }
+  });
+  return map;
+}
+
+async function setModActiveFlag(folderPath, active) {
+  const modInfoPath = path.join(folderPath, "modinfo.json");
+  const modInfo = await readJson(modInfoPath);
+  if (!modInfo || modInfo.active === active) {
+    return;
+  }
+  modInfo.active = active;
+  await fs.writeFile(modInfoPath, `${JSON.stringify(modInfo, null, "\t")}\n`, "utf8");
+}
+
+async function removeModFromLoadOrder(mod) {
+  const entries = await readModLoadOrder();
+  const key = modLoadOrderKeyFromMod(mod);
+  const nextEntries = entries.filter((entry) => modLoadOrderKeyFromEntry(entry) !== key);
+  if (!loadOrderEntriesEqual(entries, nextEntries)) {
+    await writeModLoadOrder(nextEntries);
+  }
+}
+
+async function appendModToLoadOrder(mod) {
+  const entries = await readModLoadOrder();
+  const key = modLoadOrderKeyFromMod(mod);
+  const nextEntries = entries.filter((entry) => modLoadOrderKeyFromEntry(entry) !== key);
+  nextEntries.push(modLoadOrderEntryFromMod(mod));
+  await writeModLoadOrder(nextEntries);
+}
+
+function collectModAssetOperations(mod) {
+  const operations = new Map();
+  const add = (asset, operation) => {
+    if (!asset) {
+      return;
+    }
+    const cleanAsset = String(asset).trim();
+    if (!cleanAsset) {
+      return;
+    }
+    if (!operations.has(cleanAsset)) {
+      operations.set(cleanAsset, new Set());
+    }
+    operations.get(cleanAsset).add(operation);
+  };
+
+  for (const asset of mod.modifiedAssets || []) {
+    add(asset, "modified");
+  }
+  for (const asset of mod.deletedAssets || []) {
+    add(asset, "deleted");
+  }
+  for (const asset of mod.createdAssets || []) {
+    add(asset, "created");
+  }
+  for (const asset of mod.assetsToCook || []) {
+    add(asset, "cooked");
+  }
+
+  return operations;
+}
+
+function getConflictSeverity(left, right, assets) {
+  const bothActive = left.status === "active" && right.status === "active";
+  const hasDeletedAsset = assets.some((asset) => asset.leftOperations.includes("deleted") || asset.rightOperations.includes("deleted"));
+  const duplicateInstall =
+    left.modHash &&
+    right.modHash &&
+    left.modHash === right.modHash &&
+    (left.source !== right.source || left.folderName !== right.folderName);
+
+  if (bothActive && (hasDeletedAsset || duplicateInstall)) {
+    return "high";
+  }
+  if (bothActive) {
+    return "medium";
+  }
+  return duplicateInstall ? "medium" : "low";
+}
+
+function buildModConflicts(mods) {
+  const conflicts = [];
+  const conflictCounts = new Map(mods.map((mod) => [modKey(mod), { total: 0, active: 0, highest: "" }]));
+  const operationMaps = new Map(mods.map((mod) => [modKey(mod), collectModAssetOperations(mod)]));
+  const severityRank = { low: 1, medium: 2, high: 3 };
+
+  for (let leftIndex = 0; leftIndex < mods.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < mods.length; rightIndex += 1) {
+      const left = mods[leftIndex];
+      const right = mods[rightIndex];
+      const leftOperations = operationMaps.get(modKey(left));
+      const rightOperations = operationMaps.get(modKey(right));
+      const sharedAssets = [];
+
+      for (const [asset, operations] of leftOperations.entries()) {
+        if (!rightOperations.has(asset)) {
+          continue;
+        }
+        sharedAssets.push({
+          path: asset,
+          leftOperations: [...operations].sort(),
+          rightOperations: [...rightOperations.get(asset)].sort()
+        });
+      }
+
+      const duplicateInstall =
+        left.modHash &&
+        right.modHash &&
+        left.modHash === right.modHash &&
+        (left.source !== right.source || left.folderName !== right.folderName);
+
+      if (sharedAssets.length === 0 && !duplicateInstall) {
+        continue;
+      }
+
+      const bothActive = left.status === "active" && right.status === "active";
+      const severity = getConflictSeverity(left, right, sharedAssets);
+      const winner =
+        bothActive && Number.isFinite(left.loadOrderIndex) && Number.isFinite(right.loadOrderIndex)
+          ? left.loadOrderIndex > right.loadOrderIndex
+            ? left
+            : right
+          : null;
+      const conflict = {
+        id: `${modKey(left)}|${modKey(right)}`,
+        severity,
+        bothActive,
+        duplicateInstall: Boolean(duplicateInstall),
+        assetCount: sharedAssets.length,
+        assets: sharedAssets.slice(0, MAX_CONFLICT_ASSETS),
+        hasMoreAssets: sharedAssets.length > MAX_CONFLICT_ASSETS,
+        mods: [
+          {
+            key: modKey(left),
+            title: left.title,
+            source: left.source,
+            workshopId: left.workshopId,
+            loadOrderIndex: left.loadOrderIndex,
+            operationsLabel: left.sourceLabel
+          },
+          {
+            key: modKey(right),
+            title: right.title,
+            source: right.source,
+            workshopId: right.workshopId,
+            loadOrderIndex: right.loadOrderIndex,
+            operationsLabel: right.sourceLabel
+          }
+        ],
+        winner: winner
+          ? {
+              key: modKey(winner),
+              title: winner.title,
+              loadOrderIndex: winner.loadOrderIndex
+            }
+          : null
+      };
+      conflicts.push(conflict);
+
+      for (const mod of [left, right]) {
+        const counts = conflictCounts.get(modKey(mod));
+        counts.total += 1;
+        if (bothActive) {
+          counts.active += 1;
+        }
+        if (!counts.highest || severityRank[severity] > severityRank[counts.highest]) {
+          counts.highest = severity;
+        }
+      }
+    }
+  }
+
+  for (const mod of mods) {
+    const counts = conflictCounts.get(modKey(mod)) || { total: 0, active: 0, highest: "" };
+    mod.conflictCount = counts.total;
+    mod.activeConflictCount = counts.active;
+    mod.conflictSeverity = counts.highest;
+  }
+
+  return conflicts.sort((left, right) => {
+    if (left.bothActive !== right.bothActive) {
+      return left.bothActive ? -1 : 1;
+    }
+    const severityDifference = severityRank[right.severity] - severityRank[left.severity];
+    if (severityDifference) {
+      return severityDifference;
+    }
+    return right.assetCount - left.assetCount;
+  });
+}
+
+async function migrateLegacyDisabledLocalMods(installPaths) {
+  const legacyRoots = [installPaths.legacyDisabledRoot, installPaths.legacyRuntimeDisabledRoot].filter(Boolean);
+  await ensureDirectory(installPaths.disabledRoot);
+
+  for (const legacyRoot of legacyRoots) {
+    if (!(await exists(legacyRoot))) {
+      continue;
+    }
+    const folders = await listDirectories(legacyRoot);
+    for (const folder of folders) {
+      if (folder.startsWith("_")) {
+        continue;
+      }
+      const source = path.join(legacyRoot, folder);
+      const target = path.join(installPaths.disabledRoot, folder);
+      const mod = await describeMod(source, "disabled", legacyRoot, { source: "local", sourceLabel: "Local disabled" });
+      await setModActiveFlag(source, false).catch(() => {});
+      await removeModFromLoadOrder(mod);
+      if (await exists(target)) {
+        continue;
+      }
+      await moveDirectory(source, target, installPaths);
+      await setModActiveFlag(target, false).catch(() => {});
+    }
+  }
+}
+
 async function getState() {
   const installPaths = await getInstallPaths();
-  const { gameRoot, modsRoot, workshopRoot, disabledRoot, workshopDisabledRoot, legacyDisabledRoot } = installPaths;
+  const { gameRoot, modsRoot, workshopRoot, disabledRoot, workshopDisabledRoot, legacyDisabledRoot, legacyRuntimeDisabledRoot } =
+    installPaths;
+  const gameRunning = await getGameRunning();
   await ensureDirectory(modsRoot);
   await ensureDirectory(disabledRoot);
   await ensureDirectory(workshopDisabledRoot);
+  if (!gameRunning) {
+    await migrateLegacyDisabledLocalMods(installPaths);
+    await reconcileUpdatedDisabledWorkshopMods(installPaths);
+  }
 
   const activeFolders = await listDirectories(modsRoot);
   const activeMods = [];
@@ -463,6 +887,9 @@ async function getState() {
   const disabledRoots = [disabledRoot];
   if (await exists(legacyDisabledRoot)) {
     disabledRoots.push(legacyDisabledRoot);
+  }
+  if (await exists(legacyRuntimeDisabledRoot)) {
+    disabledRoots.push(legacyRuntimeDisabledRoot);
   }
 
   const disabledMods = [];
@@ -515,9 +942,36 @@ async function getState() {
     );
   }
 
-  const mods = [...activeMods, ...disabledMods, ...workshopMods].sort((a, b) =>
-    a.title.localeCompare(b.title, undefined, { sensitivity: "base" })
-  );
+  const activeStateMods = [...activeMods, ...workshopMods];
+  const { entries: loadOrder } = gameRunning
+    ? { entries: await readModLoadOrder() }
+    : await normalizeModLoadOrder(activeStateMods);
+  const loadOrderMap = getLoadOrderMap(loadOrder);
+
+  for (const mod of activeStateMods) {
+    const loadOrderIndex = loadOrderMap.get(modLoadOrderKeyFromMod(mod));
+    mod.loadOrderIndex = Number.isInteger(loadOrderIndex) ? loadOrderIndex : null;
+    mod.priority = Number.isInteger(loadOrderIndex) ? LOAD_ORDER_BASE_PRIORITY + loadOrderIndex : null;
+  }
+  for (const mod of disabledMods) {
+    mod.loadOrderIndex = null;
+    mod.priority = null;
+  }
+
+  const mods = [...activeMods, ...workshopMods, ...disabledMods].sort((a, b) => {
+    if (a.status === "active" && b.status === "active") {
+      const leftOrder = Number.isInteger(a.loadOrderIndex) ? a.loadOrderIndex : Number.MAX_SAFE_INTEGER;
+      const rightOrder = Number.isInteger(b.loadOrderIndex) ? b.loadOrderIndex : Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+    }
+    if (a.status !== b.status) {
+      return a.status === "active" ? -1 : 1;
+    }
+    return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
+  });
+  const conflicts = buildModConflicts(mods);
 
   return {
     gameRoot,
@@ -525,9 +979,12 @@ async function getState() {
     workshopRoot,
     disabledRoot,
     workshopDisabledRoot,
+    modLoadOrderPath: getModLoadOrderPath(),
     appId: GAME_APP_ID,
-    gameRunning: await getGameRunning(),
-    mods
+    gameRunning,
+    mods,
+    conflicts,
+    activeConflictCount: conflicts.filter((conflict) => conflict.bothActive).length
   };
 }
 
@@ -560,6 +1017,7 @@ async function moveDirectory(source, target, installPaths) {
     installPaths.modsRoot,
     installPaths.disabledRoot,
     installPaths.legacyDisabledRoot,
+    installPaths.legacyRuntimeDisabledRoot,
     installPaths.workshopRoot,
     installPaths.workshopDisabledRoot
   ];
@@ -593,6 +1051,52 @@ async function moveDirectory(source, target, installPaths) {
   await fs.rename(source, target);
 }
 
+async function replaceDirectory(source, target, installPaths) {
+  if (!(await exists(target))) {
+    await moveDirectory(source, target, installPaths);
+    return;
+  }
+
+  const backup = path.join(
+    path.dirname(target),
+    `_${path.basename(target)}.backup-${process.pid}-${Date.now()}`
+  );
+  await fs.rename(target, backup);
+  try {
+    await moveDirectory(source, target, installPaths);
+  } catch (error) {
+    if (!(await exists(target)) && (await exists(backup))) {
+      await fs.rename(backup, target).catch(() => {});
+    }
+    throw error;
+  }
+  await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
+}
+
+async function reconcileUpdatedDisabledWorkshopMods(installPaths) {
+  const disabledFolders = await listDirectories(installPaths.workshopDisabledRoot);
+  for (const folderName of disabledFolders) {
+    if (folderName.startsWith("_")) {
+      continue;
+    }
+
+    const downloadedPath = path.join(installPaths.workshopRoot, folderName);
+    if (!(await exists(downloadedPath))) {
+      continue;
+    }
+
+    const disabledPath = path.join(installPaths.workshopDisabledRoot, folderName);
+    const mod = await describeMod(downloadedPath, "active", null, {
+      source: "workshop",
+      sourceLabel: "Steam Workshop",
+      workshopId: folderName
+    });
+    await replaceDirectory(downloadedPath, disabledPath, installPaths);
+    await setModActiveFlag(disabledPath, false).catch(() => {});
+    await removeModFromLoadOrder(mod);
+  }
+}
+
 async function disableMod(payload) {
   const folderName = typeof payload === "string" ? payload : payload?.folderName;
   const source = typeof payload === "string" ? "local" : payload?.source || "local";
@@ -601,17 +1105,19 @@ async function disableMod(payload) {
   await assertGameClosed();
 
   if (source === "workshop") {
-    await moveDirectory(
-      path.join(installPaths.workshopRoot, folderName),
-      path.join(installPaths.workshopDisabledRoot, folderName),
-      installPaths
-    );
+    const sourcePath = path.join(installPaths.workshopRoot, folderName);
+    const targetPath = path.join(installPaths.workshopDisabledRoot, folderName);
+    const mod = await describeMod(sourcePath, "active", null, { source: "workshop", sourceLabel: "Steam Workshop", workshopId: folderName });
+    await replaceDirectory(sourcePath, targetPath, installPaths);
+    await setModActiveFlag(targetPath, false).catch(() => {});
+    await removeModFromLoadOrder(mod);
   } else {
-    await moveDirectory(
-      path.join(installPaths.modsRoot, folderName),
-      path.join(installPaths.disabledRoot, folderName),
-      installPaths
-    );
+    const sourcePath = path.join(installPaths.modsRoot, folderName);
+    const targetPath = path.join(installPaths.disabledRoot, folderName);
+    const mod = await describeMod(sourcePath, "active", null, { source: "local", sourceLabel: "Local" });
+    await replaceDirectory(sourcePath, targetPath, installPaths);
+    await setModActiveFlag(targetPath, false).catch(() => {});
+    await removeModFromLoadOrder(mod);
   }
   return getState();
 }
@@ -628,6 +1134,7 @@ async function enableMod(payload) {
   const allowedRoots = [
     path.normalize(installPaths.disabledRoot),
     path.normalize(installPaths.legacyDisabledRoot),
+    path.normalize(installPaths.legacyRuntimeDisabledRoot),
     path.normalize(installPaths.workshopDisabledRoot)
   ];
   if (!allowedRoots.includes(normalizedRoot)) {
@@ -635,7 +1142,59 @@ async function enableMod(payload) {
   }
 
   const targetRoot = source === "workshop" ? installPaths.workshopRoot : installPaths.modsRoot;
-  await moveDirectory(path.join(normalizedRoot, folderName), path.join(targetRoot, folderName), installPaths);
+  const sourcePath = path.join(normalizedRoot, folderName);
+  const targetPath = path.join(targetRoot, folderName);
+  const mod = await describeMod(sourcePath, "disabled", normalizedRoot, {
+    source,
+    sourceLabel: source === "workshop" ? "Steam Workshop disabled" : "Local disabled",
+    workshopId: source === "workshop" ? folderName : null
+  });
+  if (source === "workshop" && (await exists(targetPath))) {
+    const downloadedMod = await describeMod(targetPath, "active", null, {
+      source: "workshop",
+      sourceLabel: "Steam Workshop",
+      workshopId: folderName
+    });
+    await fs.rm(sourcePath, { recursive: true, force: true });
+    await setModActiveFlag(targetPath, true).catch(() => {});
+    await appendModToLoadOrder(downloadedMod);
+    return getState();
+  }
+  await moveDirectory(sourcePath, targetPath, installPaths);
+  await setModActiveFlag(targetPath, true).catch(() => {});
+  await appendModToLoadOrder(mod);
+  return getState();
+}
+
+async function setLoadOrder(payload) {
+  await assertGameClosed();
+  const requestedKeys = Array.isArray(payload) ? payload : payload?.keys;
+  if (!Array.isArray(requestedKeys)) {
+    throw new Error("Load order update is missing mod keys.");
+  }
+
+  const state = await getState();
+  const activeMods = state.mods.filter((mod) => mod.status === "active");
+  const modsByKey = new Map(activeMods.map((mod) => [modKey(mod), mod]));
+  const seen = new Set();
+  const orderedMods = [];
+
+  for (const key of requestedKeys) {
+    const mod = modsByKey.get(String(key));
+    if (!mod || seen.has(modKey(mod))) {
+      continue;
+    }
+    orderedMods.push(mod);
+    seen.add(modKey(mod));
+  }
+
+  for (const mod of activeMods) {
+    if (!seen.has(modKey(mod))) {
+      orderedMods.push(mod);
+    }
+  }
+
+  await writeModLoadOrder(orderedMods.map(modLoadOrderEntryFromMod));
   return getState();
 }
 
@@ -675,6 +1234,178 @@ function publicPreset(preset) {
   };
 }
 
+function cleanSharedText(value, fallback, maxLength = 160) {
+  const clean = String(value || "")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+  return clean || fallback;
+}
+
+function normalizeSharedPresetMod(mod) {
+  const source = mod?.source === "workshop" ? "workshop" : "local";
+  if (source === "workshop") {
+    const steamId = normalizeSteamId(mod?.steamId || mod?.workshopId || mod?.folderName);
+    if (!steamId) {
+      throw new Error("Shared preset contains a Workshop mod without a valid ID.");
+    }
+    const folderName = String(steamId);
+    const modName = cleanSharedText(mod?.modName || mod?.displayFolderName, folderName);
+    return {
+      source,
+      folderName,
+      displayFolderName: modName,
+      modName,
+      title: cleanSharedText(mod?.title, modName),
+      steamId,
+      workshopId: folderName
+    };
+  }
+
+  const folderName = cleanSharedText(mod?.folderName, "", 180);
+  assertSafeModName(folderName);
+  const modName = cleanSharedText(mod?.modName || mod?.displayFolderName, folderName);
+  return {
+    source,
+    folderName,
+    displayFolderName: modName,
+    modName,
+    title: cleanSharedText(mod?.title, modName),
+    steamId: 0,
+    workshopId: null
+  };
+}
+
+function normalizeSharedPresetPayload(payload) {
+  if (!payload || payload.format !== 1 || String(payload.gameAppId) !== GAME_APP_ID) {
+    throw new Error("This is not a supported Bellwright preset code.");
+  }
+  if (!Array.isArray(payload.mods) || payload.mods.length > MAX_SHARED_MODS) {
+    throw new Error("Shared preset has an invalid mod list.");
+  }
+
+  const activeMods = [];
+  const seen = new Set();
+  for (const rawMod of payload.mods) {
+    const mod = normalizeSharedPresetMod(rawMod);
+    const key = modKey(mod);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    activeMods.push(mod);
+  }
+
+  return {
+    name: cleanSharedText(payload.name, "Shared preset", 80),
+    activeMods
+  };
+}
+
+function encodePresetShareCode(preset) {
+  const payload = {
+    format: 1,
+    gameAppId: GAME_APP_ID,
+    name: preset.name,
+    createdAt: new Date().toISOString(),
+    mods: preset.activeMods.map(normalizeSharedPresetMod)
+  };
+  const compressed = zlib.deflateRawSync(Buffer.from(JSON.stringify(payload), "utf8"), { level: 9 });
+  return `${PRESET_SHARE_PREFIX}${compressed.toString("base64url")}`;
+}
+
+function decodePresetShareCode(value) {
+  const code = String(value || "").replace(/\s+/g, "");
+  if (!code.startsWith(PRESET_SHARE_PREFIX) || code.length > MAX_SHARE_CODE_LENGTH) {
+    throw new Error("Invalid Bellwright preset code.");
+  }
+
+  try {
+    const compressed = Buffer.from(code.slice(PRESET_SHARE_PREFIX.length), "base64url");
+    const decoded = zlib.inflateRawSync(compressed, { maxOutputLength: MAX_SHARED_PRESET_BYTES });
+    return normalizeSharedPresetPayload(JSON.parse(decoded.toString("utf8")));
+  } catch (error) {
+    if (error?.message?.startsWith("Shared preset") || error?.message?.startsWith("This is not")) {
+      throw error;
+    }
+    throw new Error("Preset code is damaged or unsupported.");
+  }
+}
+
+async function copyPresetShareCode(id) {
+  const store = await readPresetStore();
+  const preset = store.presets.find((candidate) => candidate.id === id);
+  if (!preset) {
+    throw new Error("Select a preset to share.");
+  }
+  const code = encodePresetShareCode(preset);
+  clipboard.writeText(code);
+  return { codeLength: code.length, preset: publicPreset(preset) };
+}
+
+async function inspectPresetShareCode(code) {
+  const sharedPreset = decodePresetShareCode(code);
+  const state = await getState();
+  const installedByKey = new Map(state.mods.map((mod) => [modKey(mod), mod]));
+  const mods = sharedPreset.activeMods.map((sharedMod, index) => {
+    const installedMod = installedByKey.get(modKey(sharedMod));
+    return {
+      order: index + 1,
+      title: installedMod?.title || sharedMod.title,
+      modName: sharedMod.modName,
+      source: sharedMod.source,
+      workshopId: sharedMod.workshopId,
+      installed: Boolean(installedMod),
+      status: installedMod?.status || "missing"
+    };
+  });
+
+  return {
+    name: sharedPreset.name,
+    activeCount: mods.length,
+    installedCount: mods.filter((mod) => mod.installed).length,
+    missingWorkshopCount: mods.filter((mod) => !mod.installed && mod.source === "workshop").length,
+    missingLocalCount: mods.filter((mod) => !mod.installed && mod.source === "local").length,
+    mods
+  };
+}
+
+function getUniqueImportedPresetName(name, presets) {
+  const names = new Set(presets.map((preset) => preset.name.toLowerCase()));
+  if (!names.has(name.toLowerCase())) {
+    return name;
+  }
+  const base = `${name} (shared)`;
+  if (!names.has(base.toLowerCase())) {
+    return base;
+  }
+  let suffix = 2;
+  while (names.has(`${base} ${suffix}`.toLowerCase())) {
+    suffix += 1;
+  }
+  return `${base} ${suffix}`;
+}
+
+async function importPresetShareCode(code) {
+  const sharedPreset = decodePresetShareCode(code);
+  const store = await readPresetStore();
+  const now = new Date().toISOString();
+  const preset = {
+    id: createPresetId(sharedPreset.name),
+    name: getUniqueImportedPresetName(sharedPreset.name, store.presets),
+    createdAt: now,
+    updatedAt: now,
+    activeMods: sharedPreset.activeMods
+  };
+  store.presets.push(preset);
+  await writePresetStore(store);
+  return {
+    preset: publicPreset(preset),
+    presets: await listPresets()
+  };
+}
+
 async function readPresetStore() {
   const store = (await readJson(getPresetPath())) || {};
   const presets = Array.isArray(store.presets) ? store.presets : [];
@@ -693,8 +1424,10 @@ async function readPresetStore() {
             source: mod.source || "local",
             folderName: mod.folderName,
             displayFolderName: mod.displayFolderName || mod.folderName,
+            modName: mod.modName || mod.displayFolderName || mod.folderName,
             title: mod.title || mod.displayFolderName || mod.folderName,
-            workshopId: mod.workshopId || null
+            steamId: normalizeSteamId(mod.steamId || mod.workshopId || 0),
+            workshopId: mod.workshopId || (mod.steamId ? String(mod.steamId) : null)
           }))
       }))
   };
@@ -727,10 +1460,11 @@ async function savePreset(payload) {
       source: mod.source,
       folderName: mod.folderName,
       displayFolderName: mod.displayFolderName,
+      modName: mod.modName,
       title: mod.title,
+      steamId: mod.steamId || 0,
       workshopId: mod.workshopId || null
-    }))
-    .sort((a, b) => modKey(a).localeCompare(modKey(b)));
+    }));
 
   const existing = store.presets.find((preset) => preset.name.toLowerCase() === name.toLowerCase());
   const preset = {
@@ -777,6 +1511,20 @@ async function loadPreset(id) {
   const targetKeys = new Set(preset.activeMods.map(modKey));
   const currentKeys = new Set(currentState.mods.map(modKey));
   const missing = preset.activeMods.filter((savedMod) => !currentKeys.has(modKey(savedMod)));
+  if (missing.length) {
+    const workshopCount = missing.filter((mod) => mod.source === "workshop").length;
+    const localCount = missing.length - workshopCount;
+    const parts = [];
+    if (workshopCount) {
+      parts.push(`${workshopCount} Workshop mod${workshopCount === 1 ? "" : "s"}`);
+    }
+    if (localCount) {
+      parts.push(`${localCount} local mod${localCount === 1 ? "" : "s"}`);
+    }
+    throw new Error(
+      `${parts.join(" and ")} ${missing.length === 1 ? "is" : "are"} missing. Install ${missing.length === 1 ? "it" : "them"} before loading this preset.`
+    );
+  }
   let changed = 0;
 
   for (const mod of currentState.mods.filter((candidate) => candidate.status === "active" && !targetKeys.has(modKey(candidate)))) {
@@ -805,10 +1553,36 @@ async function loadPreset(id) {
     changed += 1;
   }
 
+  currentState = await getState();
+  const finalActiveMods = currentState.mods.filter((mod) => mod.status === "active");
+  const finalActiveByKey = new Map(finalActiveMods.map((mod) => [modKey(mod), mod]));
+  const orderedActiveMods = [];
+  const orderedKeys = new Set();
+  for (const savedMod of preset.activeMods) {
+    const activeMod = finalActiveByKey.get(modKey(savedMod));
+    if (!activeMod || orderedKeys.has(modKey(activeMod))) {
+      continue;
+    }
+    orderedActiveMods.push(activeMod);
+    orderedKeys.add(modKey(activeMod));
+  }
+  for (const mod of finalActiveMods) {
+    if (!orderedKeys.has(modKey(mod))) {
+      orderedActiveMods.push(mod);
+    }
+  }
+  const beforeEntries = await readModLoadOrder();
+  const nextEntries = orderedActiveMods.map(modLoadOrderEntryFromMod);
+  const orderChanged = !loadOrderEntriesEqual(beforeEntries, nextEntries);
+  if (orderChanged) {
+    await writeModLoadOrder(nextEntries);
+  }
+
   return {
     preset: publicPreset(preset),
     state: await getState(),
     changed,
+    orderChanged,
     missing
   };
 }
@@ -1175,6 +1949,26 @@ function getAppInfo() {
 
 ipcMain.handle("mods:getState", getState);
 
+ipcMain.on("window:minimize", (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize();
+});
+
+ipcMain.on("window:toggleMaximize", (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window) {
+    return;
+  }
+  if (window.isMaximized()) {
+    window.unmaximize();
+  } else {
+    window.maximize();
+  }
+});
+
+ipcMain.on("window:close", (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close();
+});
+
 ipcMain.handle("app:getInfo", getAppInfo);
 
 ipcMain.handle("presets:list", async () => {
@@ -1193,6 +1987,18 @@ ipcMain.handle("presets:delete", async (_event, id) => {
   return deletePreset(id);
 });
 
+ipcMain.handle("presets:copyShareCode", async (_event, id) => {
+  return copyPresetShareCode(id);
+});
+
+ipcMain.handle("presets:inspectShareCode", async (_event, code) => {
+  return inspectPresetShareCode(code);
+});
+
+ipcMain.handle("presets:importShareCode", async (_event, code) => {
+  return importPresetShareCode(code);
+});
+
 ipcMain.handle("app:updateLauncher", async () => {
   return updateLauncher();
 });
@@ -1203,6 +2009,10 @@ ipcMain.handle("mods:disable", async (_event, payload) => {
 
 ipcMain.handle("mods:enable", async (_event, payload) => {
   return enableMod(payload);
+});
+
+ipcMain.handle("mods:setLoadOrder", async (_event, payload) => {
+  return setLoadOrder(payload);
 });
 
 ipcMain.handle("mods:showTooltip", async (_event, payload) => {
@@ -1222,6 +2032,15 @@ ipcMain.handle("mods:openModsFolder", async () => {
 
 ipcMain.handle("mods:launchGame", async () => {
   await shell.openExternal(`steam://rungameid/${GAME_APP_ID}`);
+  return true;
+});
+
+ipcMain.handle("mods:openWorkshopItem", async (_event, workshopId) => {
+  const id = normalizeSteamId(workshopId);
+  if (!id) {
+    throw new Error("Invalid Workshop item ID.");
+  }
+  await shell.openExternal(`https://steamcommunity.com/sharedfiles/filedetails/?id=${id}`);
   return true;
 });
 

@@ -7,6 +7,23 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
+    <header id="windowTitlebar" class="windowTitlebar">
+      <div class="windowIdentity">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2 4 6v6c0 5.1 3.4 8.7 8 10 4.6-1.3 8-4.9 8-10V6l-8-4Z" />
+          <path d="M8 12h8M12 7v10" />
+        </svg>
+        <span>Bellwright Mod Launcher</span>
+      </div>
+      <div class="windowControls">
+        <button id="windowMinimizeButton" class="windowControlButton" type="button" title="Minimize" aria-label="Minimize window">
+          <svg viewBox="0 0 24 24"><path d="M5 12h14" /></svg>
+        </button>
+        <button id="windowCloseButton" class="windowControlButton close" type="button" title="Close" aria-label="Close window">
+          <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg>
+        </button>
+      </div>
+    </header>
     <main class="shell">
       <section class="topbar">
         <div class="brand">
@@ -65,13 +82,19 @@
           </select>
           <button id="savePresetButton" class="presetButton" type="button">Save</button>
           <button id="loadPresetButton" class="presetButton" type="button" disabled>Load</button>
+          <button id="sharePresetButton" class="presetIconButton" type="button" title="Copy preset share code" aria-label="Copy preset share code" disabled>
+            <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="m8.6 10.5 6.8-4" /><path d="m8.6 13.5 6.8 4" /></svg>
+          </button>
+          <button id="importPresetButton" class="presetIconButton" type="button" title="Import preset code" aria-label="Import preset code">
+            <svg viewBox="0 0 24 24"><path d="M12 3v12" /><path d="m7 10 5 5 5-5" /><path d="M5 21h14" /></svg>
+          </button>
           <button id="deletePresetButton" class="presetIconButton" type="button" title="Delete preset" aria-label="Delete preset" disabled>
             <svg viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v5" /><path d="M14 11v5" /></svg>
           </button>
         </section>
         <section class="aboutSection" aria-label="FSD Software">
           <strong id="aboutMaker">FSD Software</strong>
-          <span id="appVersion">v0.2.0</span>
+          <span id="appVersion">v0.3.0</span>
           <button id="updateButton" class="updateButton" type="button">
             <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.4 6.4L3 16" /><path d="M3 16h6v6" /><path d="M3 12A9 9 0 0 1 18.4 5.6L21 8" /><path d="M21 8h-6V2" /></svg>
             Update
@@ -131,7 +154,35 @@
       </section>
     </div>
 
+    <div id="shareModalBackdrop" class="modalBackdrop" hidden>
+      <section class="shareModalPanel" role="dialog" aria-modal="true" aria-labelledby="shareModalTitle">
+        <div class="shareModalHeader">
+          <h2 id="shareModalTitle">Import preset</h2>
+          <button id="shareModalCloseButton" class="modalCloseButton" type="button" title="Close" aria-label="Close import preset">
+            <svg viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          </button>
+        </div>
+        <textarea id="shareCodeInput" class="shareCodeInput" placeholder="Paste BWL1 preset code" aria-label="Bellwright preset share code" spellcheck="false"></textarea>
+        <section id="sharePreview" class="sharePreview" aria-live="polite" hidden>
+          <div class="sharePreviewSummary">
+            <div>
+              <strong id="sharePreviewName">Shared preset</strong>
+              <span id="sharePreviewCounts"></span>
+            </div>
+            <span id="sharePreviewWarning" class="sharePreviewWarning" hidden></span>
+          </div>
+          <ol id="shareModList" class="shareModList"></ol>
+        </section>
+        <div class="modalActions">
+          <button id="shareModalCancelButton" class="modalButton secondary" type="button">Cancel</button>
+          <button id="sharePreviewButton" class="modalButton secondary" type="button">Preview</button>
+          <button id="shareImportButton" class="modalButton primary" type="button" hidden>Save preset</button>
+        </div>
+      </section>
+    </div>
+
     <div id="toast" class="toast" hidden></div>
+    <div id="conflictTooltip" class="conflictTooltip" role="tooltip" hidden></div>
 
     <script src="./renderer.js"></script>
   </body>
