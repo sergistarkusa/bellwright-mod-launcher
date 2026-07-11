@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0] - 2026-07-10
+
+- Added trusted native runtime mod manifests and payload integrity checks.
+- Added Bellwright build compatibility checks before native code is loaded.
+- Added automatic main-menu injection through a launcher-bundled injector.
+- Added native runtime status to the dashboard and individual mod cards.
+- Workshop mods cannot supply executable injectors; unknown native payloads are blocked.
+
 ## [0.3.0] - 2026-07-07
 
 ### Highlights
@@ -34,7 +42,7 @@
 
 ### Links
 
-- [Download the latest release](https://github.com/sergistarkusa/bellwright-mod-launcher/releases/latest)
+- [Download from GitHub Releases](https://github.com/sergistarkusa/bellwright-mod-launcher/releases)
 - [Join the Discord](https://discord.gg/Nnqt8S2r7n)
 - [Support development on Ko-fi](https://ko-fi.com/excelsiorone)
 

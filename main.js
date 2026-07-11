@@ -6,6 +6,7 @@ const childProcess = require("child_process");
 const https = require("https");
 const zlib = require("zlib");
 const packageInfo = require("./package.json");
+const { NativeRuntimeManager } = require("./native-runtime");
 
 const GAME_APP_ID = "1812450";
 const DEFAULT_STEAM_ROOT = path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Steam");
@@ -45,6 +46,7 @@ let updateInProgress = false;
 let gameRunningPollTimer = null;
 let gameRunningPollInFlight = false;
 let lastKnownGameRunning = null;
+let nativeRuntimeManager = null;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -234,11 +236,28 @@ async function pollGameRunning() {
   }
   gameRunningPollInFlight = true;
   try {
-    const gameRunning = await getGameRunning();
+    const gameProcess = await getGameProcess();
+    const gameRunning = Boolean(gameProcess);
     if (lastKnownGameRunning !== null && gameRunning !== lastKnownGameRunning && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("mods:gameRunningChanged", gameRunning);
     }
     lastKnownGameRunning = gameRunning;
+    if (nativeRuntimeManager) {
+      const activeModFolders = gameRunning ? await getActiveModFolders() : [];
+      await nativeRuntimeManager.handleProcess(gameProcess, activeModFolders);
+    }
+  } catch (error) {
+    console.error("Game process watcher failed:", error);
+    if (nativeRuntimeManager) {
+      nativeRuntimeManager.setStatus({
+        phase: "failed",
+        label: "Monitor failed",
+        message: error.message || String(error),
+        loaded: 0,
+        total: 0,
+        mods: []
+      });
+    }
   } finally {
     gameRunningPollInFlight = false;
   }
@@ -253,6 +272,16 @@ function startGameRunningWatcher() {
 }
 
 app.whenReady().then(() => {
+  nativeRuntimeManager = new NativeRuntimeManager({
+    userDataPath: app.getPath("userData"),
+    bundledInjectorPath: path.join(__dirname, "runtime", "BellwrightNativeInjector.exe"),
+    gameLogPath: path.join(getLocalAppDataPath(), "Bellwright", "Saved", "Logs", "Bellwright.log"),
+    onStatusChanged: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("mods:nativeRuntimeChanged", status);
+      }
+    }
+  });
   createWindow();
   startGameRunningWatcher();
 });
@@ -483,6 +512,10 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
         .join(".")
     : "";
 
+  const nativeRuntime = nativeRuntimeManager
+    ? nativeRuntimeManager.publicInspection(await nativeRuntimeManager.inspectMod(folderPath, status === "active"))
+    : null;
+
   return {
     folderName,
     displayFolderName,
@@ -513,28 +546,44 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
     modKitVersion: modInfo?.modKitVersion || null,
     gameVersion: modInfo?.gameVersion || null,
     enforceSameMods: modInfo?.enforceSameMods || "",
+    nativeRuntime,
     path: folderPath
   };
 }
 
+async function getGameProcess() {
+  const names = [...GAME_PROCESS_NAMES].map((name) => path.basename(name, ".exe"));
+  const script = `$names=@(${names.map((name) => `'${name.replace(/'/g, "''")}'`).join(",")});` +
+    "$p=Get-Process -Name $names -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1;" +
+    "if($p){$native=@();try{$native=@($p.Modules|Where-Object {$_.ModuleName -eq 'BellwrightNativePayload.dll'}|ForEach-Object {$_.FileName})}catch{};" +
+    "[pscustomobject]@{pid=$p.Id;startTime=$p.StartTime.ToUniversalTime().ToString('o');path=$p.Path;nativeModules=$native}|ConvertTo-Json -Compress}";
+  const output = await execFileText("powershell", ["-NoProfile", "-Command", script]);
+  if (!output.trim()) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(output);
+    return parsed?.pid && parsed?.path ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 async function getGameRunning() {
-  return new Promise((resolve) => {
-    childProcess.exec(
-      "powershell -NoProfile -Command \"Get-Process | Select-Object -ExpandProperty ProcessName\"",
-      { windowsHide: true },
-      (error, stdout) => {
-        if (error) {
-          resolve(false);
-          return;
-        }
-        const processNames = stdout
-          .split(/\r?\n/)
-          .map((name) => `${name}.exe`)
-          .filter(Boolean);
-        resolve(processNames.some((name) => GAME_PROCESS_NAMES.has(name)));
+  return Boolean(await getGameProcess());
+}
+
+async function getActiveModFolders() {
+  const installPaths = await getInstallPaths();
+  const folders = [];
+  for (const root of [installPaths.modsRoot, installPaths.workshopRoot]) {
+    for (const folder of await listDirectories(root)) {
+      if (!folder.startsWith("_")) {
+        folders.push(path.join(root, folder));
       }
-    );
-  });
+    }
+  }
+  return folders;
 }
 
 function getLocalAppDataPath() {
@@ -972,6 +1021,13 @@ async function getState() {
     return a.title.localeCompare(b.title, undefined, { sensitivity: "base" });
   });
   const conflicts = buildModConflicts(mods);
+  const nativeRuntime = nativeRuntimeManager ? nativeRuntimeManager.getStatus() : null;
+  const nativeRuntimeById = new Map((nativeRuntime?.mods || []).map((runtimeMod) => [runtimeMod.id, runtimeMod]));
+  for (const mod of mods) {
+    if (mod.nativeRuntime?.id && nativeRuntimeById.has(mod.nativeRuntime.id)) {
+      mod.nativeRuntime = { ...mod.nativeRuntime, ...nativeRuntimeById.get(mod.nativeRuntime.id) };
+    }
+  }
 
   return {
     gameRoot,
@@ -982,6 +1038,7 @@ async function getState() {
     modLoadOrderPath: getModLoadOrderPath(),
     appId: GAME_APP_ID,
     gameRunning,
+    nativeRuntime,
     mods,
     conflicts,
     activeConflictCount: conflicts.filter((conflict) => conflict.bothActive).length

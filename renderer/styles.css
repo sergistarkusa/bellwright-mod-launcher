@@ -235,7 +235,7 @@ p {
 
 .statusStrip {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 1px;
   margin-top: 14px;
   overflow: hidden;
@@ -627,6 +627,16 @@ p {
 .pill.workshop {
   color: #081719;
   background: var(--accent-2);
+}
+
+.pill.native {
+  color: #151104;
+  background: var(--accent);
+}
+
+.pill.nativeError {
+  color: #fff;
+  background: var(--danger);
 }
 
 .loadOrderBadge {

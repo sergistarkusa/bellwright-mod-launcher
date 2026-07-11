@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("bellwrightMods", {
   closeWindow: () => ipcRenderer.send("window:close"),
   getState: () => ipcRenderer.invoke("mods:getState"),
   onGameRunningChanged: (callback) => ipcRenderer.on("mods:gameRunningChanged", (_event, gameRunning) => callback(gameRunning)),
+  onNativeRuntimeChanged: (callback) => ipcRenderer.on("mods:nativeRuntimeChanged", (_event, status) => callback(status)),
   enable: (payload) => ipcRenderer.invoke("mods:enable", payload),
   disable: (payload) => ipcRenderer.invoke("mods:disable", payload),
   setLoadOrder: (payload) => ipcRenderer.invoke("mods:setLoadOrder", payload),

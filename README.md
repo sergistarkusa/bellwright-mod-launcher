@@ -18,6 +18,8 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 - Refresh the running/closed game state automatically.
 - Open the Bellwright mods folder.
 - Launch Bellwright through Steam.
+- Load trusted native runtime mods automatically after Bellwright reaches the main menu.
+- Block modified, unknown, or game-incompatible native payloads before execution.
 - Save and load named active-mod presets, including load order.
 - Share presets as compact `BWL1` codes and preview imported mod availability before saving.
 - Change active mod load priority through Bellwright's `modloadorder.json`.
@@ -39,6 +41,10 @@ See [CHANGELOG.md](CHANGELOG.md) for release details.
 This is an unofficial community tool and is not affiliated with Donkey Crew, Snail Games, or Steam.
 
 The launcher moves mod folders between active and disabled locations, updates `modinfo.json` active flags when possible, and keeps disabled local mods outside `Content/Mods` so Bellwright does not mount them accidentally. Close Bellwright before changing mod state or load order.
+
+Trusted native mods include a `native-runtime.json` manifest. The launcher verifies the payload hash and current Bellwright executable, stages the DLL in its private runtime cache, and uses its bundled injector only after the main menu has loaded. Workshop packages cannot provide their own executable injector.
+
+Version 0.4.0 intentionally allows one active native mod at a time. A later shared host can safely multiplex several native plugins without relying on Windows to distinguish identically named staged DLLs.
 
 Presets store the currently active local and Workshop mods by folder/source and load order. Loading a preset changes the active mod set and priority order to match it, so Bellwright must be closed.
 

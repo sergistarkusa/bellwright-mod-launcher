@@ -11,6 +11,7 @@ const gameState = document.querySelector("#gameState");
 const activeCount = document.querySelector("#activeCount");
 const availableCount = document.querySelector("#availableCount");
 const workshopCount = document.querySelector("#workshopCount");
+const nativeRuntimeState = document.querySelector("#nativeRuntimeState");
 const activeColumnCount = document.querySelector("#activeColumnCount");
 const availableColumnCount = document.querySelector("#availableColumnCount");
 const refreshButton = document.querySelector("#refreshButton");
@@ -232,6 +233,26 @@ function getStatusLabel(mod) {
   };
 }
 
+function getNativeBadge(mod) {
+  if (!mod.nativeRuntime) {
+    return "";
+  }
+  const errorPhases = new Set(["invalid", "missing", "untrusted", "blocked", "incompatible", "failed"]);
+  const className = errorPhases.has(mod.nativeRuntime.phase) ? "nativeError" : "native";
+  return `<span class="pill ${className}" title="${escapeHtml(mod.nativeRuntime.message || "Native runtime mod")}">${escapeHtml(mod.nativeRuntime.label || "Native")}</span>`;
+}
+
+function renderNativeRuntime(runtime) {
+  const value = runtime || { phase: "idle", label: "Idle", message: "No active native mods" };
+  nativeRuntimeState.textContent = value.label || "Idle";
+  nativeRuntimeState.title = value.message || "";
+  nativeRuntimeState.style.color = ["blocked", "failed", "incompatible"].includes(value.phase)
+    ? "var(--danger)"
+    : value.phase === "loaded"
+      ? "var(--ok)"
+      : "var(--accent)";
+}
+
 function showModTooltip(mod, anchorElement) {
   const rect = anchorElement.getBoundingClientRect();
   window.bellwrightMods
@@ -289,6 +310,21 @@ async function flushPendingGameRunningState() {
 function handleGameRunningChanged(gameRunning) {
   pendingGameRunningState = Boolean(gameRunning);
   flushPendingGameRunningState();
+}
+
+function handleNativeRuntimeChanged(runtime) {
+  if (state) {
+    state.nativeRuntime = runtime;
+    const runtimeById = new Map((runtime?.mods || []).map((mod) => [mod.id, mod]));
+    for (const mod of state.mods) {
+      if (mod.nativeRuntime?.id && runtimeById.has(mod.nativeRuntime.id)) {
+        mod.nativeRuntime = { ...mod.nativeRuntime, ...runtimeById.get(mod.nativeRuntime.id) };
+      }
+    }
+    render();
+    return;
+  }
+  renderNativeRuntime(runtime);
 }
 
 async function loadAppInfo() {
@@ -511,6 +547,7 @@ function render() {
   activeCount.textContent = activeMods.length;
   availableCount.textContent = availableMods.length;
   workshopCount.textContent = workshopMods.length;
+  renderNativeRuntime(state.nativeRuntime);
 
   const visibleActive = filterMods(activeMods, query);
   const visibleAvailable = filterMods(availableMods, query);
@@ -568,6 +605,7 @@ function renderColumn(list, empty, mods) {
     const actionClass = mod.status === "active" ? "disable" : "enable";
     const actionIcon = mod.status === "active" ? icons.pause : icons.power;
     const status = getStatusLabel(mod);
+    const nativeBadge = getNativeBadge(mod);
     const activeIndex = activeIndexByKey.get(modKey(mod));
     const loadOrderText = Number.isInteger(activeIndex) ? String(activeIndex + 1).padStart(2, "0") : "";
     const conflictCount = mod.status === "active" ? mod.activeConflictCount : mod.conflictCount;
@@ -582,8 +620,10 @@ function renderColumn(list, empty, mods) {
             <button class="orderButton" type="button" data-direction="1" data-blocked="${activeIndex >= orderedActiveMods.length - 1}" title="Move later" aria-label="Move later">${icons.down}</button>
           </div>`
         : "";
-    const note = state.gameRunning
-      ? "Close game first"
+    const note = mod.nativeRuntime && ["invalid", "missing", "untrusted", "blocked"].includes(mod.nativeRuntime.phase)
+      ? mod.nativeRuntime.message
+      : state.gameRunning
+        ? "Close game first"
       : mod.activeConflictCount
         ? `${mod.activeConflictCount} active conflict${mod.activeConflictCount === 1 ? "" : "s"}`
       : mod.source === "workshop"
@@ -598,6 +638,7 @@ function renderColumn(list, empty, mods) {
           <div class="folderName">${escapeHtml(mod.modName || mod.displayFolderName || mod.folderName)}</div>
         </div>
         ${conflictBadge}
+        ${nativeBadge}
         <span class="pill ${status.className}">${status.text}</span>
       </div>
       <div class="cardActions">
@@ -1142,6 +1183,7 @@ window.addEventListener("scroll", hideModTooltip, true);
 
 window.bellwrightMods.onUpdateProgress(showUpdateProgress);
 window.bellwrightMods.onGameRunningChanged(handleGameRunningChanged);
+window.bellwrightMods.onNativeRuntimeChanged(handleNativeRuntimeChanged);
 
 loadAppInfo();
 loadPresets();

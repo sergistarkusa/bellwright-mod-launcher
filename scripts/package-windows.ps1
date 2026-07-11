@@ -37,11 +37,13 @@ Rename-Item -LiteralPath (Join-Path $outDir "electron.exe") -NewName "Bellwright
 $appRoot = Join-Path $outDir "resources\app"
 New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot "main.js") -Destination $appRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot "native-runtime.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "preload.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "package.json") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "package-lock.json") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "LICENSE") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "renderer") -Destination $appRoot -Recurse
+Copy-Item -LiteralPath (Join-Path $projectRoot "runtime") -Destination $appRoot -Recurse
 
 $zipSafeDate = [DateTime]"2026-01-01T00:00:00"
 Get-ChildItem -LiteralPath $outDir -Recurse -Force | ForEach-Object {
