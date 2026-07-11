@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1] - 2026-07-10
+
+- Fixed launcher updates that could close without installing or restarting.
+- Isolated each download in a unique staging folder to avoid locked-file failures on retry.
+- Waits for the complete old launcher process tree before atomically replacing the installation.
+- Preserves an external update log and restores the previous installation if activation fails.
+
 ## [0.4.0] - 2026-07-10
 
 - Added trusted native runtime mod manifests and payload integrity checks.

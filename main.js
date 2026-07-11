@@ -1834,6 +1834,20 @@ function Write-UpdateLog([string]$Message) {
   Add-Content -LiteralPath $LogPath -Value $line
 }
 
+function Invoke-WithRetry([scriptblock]$Action, [string]$Description) {
+  $lastError = $null
+  for ($attempt = 1; $attempt -le 40; $attempt++) {
+    try {
+      & $Action
+      return
+    } catch {
+      $lastError = $_
+      Start-Sleep -Milliseconds 250
+    }
+  }
+  throw "$Description failed after retries: $($lastError.Exception.Message)"
+}
+
 try {
   $install = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
   $staged = [System.IO.Path]::GetFullPath($StagedAppDir).TrimEnd('\')
@@ -1854,36 +1868,77 @@ try {
     throw "Staged update is missing resources\app\package.json."
   }
 
-  try {
-    Wait-Process -Id $ProcessId -Timeout 45
-  } catch {
-    Write-UpdateLog "Process wait ended: $($_.Exception.Message)"
-  }
-
-  Start-Sleep -Milliseconds 700
-
   $parent = Split-Path -Parent $install
   $leaf = Split-Path -Leaf $install
-  $backupLeaf = "$leaf.old-$(Get-Date -Format yyyyMMddHHmmss)"
+  $stamp = Get-Date -Format yyyyMMddHHmmssfff
+  $backupLeaf = "$leaf.old-$stamp"
   $backup = Join-Path $parent $backupLeaf
+  $replacementLeaf = "$leaf.new-$stamp"
+  $replacement = Join-Path $parent $replacementLeaf
 
-  Rename-Item -LiteralPath $install -NewName $backupLeaf
-  New-Item -ItemType Directory -Path $install | Out-Null
-
+  New-Item -ItemType Directory -Path $replacement | Out-Null
   try {
-    $items = Get-ChildItem -LiteralPath $staged -Force
+    $items = @(Get-ChildItem -LiteralPath $staged -Force)
     if ($items.Count -eq 0) {
       throw "Staged update folder is empty."
     }
-    $items | Copy-Item -Destination $install -Recurse -Force
+    $items | Copy-Item -Destination $replacement -Recurse -Force
   } catch {
-    Remove-Item -LiteralPath $install -Recurse -Force -ErrorAction SilentlyContinue
-    Rename-Item -LiteralPath $backup -NewName $leaf
+    Remove-Item -LiteralPath $replacement -Recurse -Force -ErrorAction SilentlyContinue
+    throw
+  }
+
+  $deadline = (Get-Date).AddSeconds(20)
+  do {
+    $running = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+      if (-not $_.ExecutablePath) { return $false }
+      try {
+        $candidate = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+        return $candidate.StartsWith($install + '\', [System.StringComparison]::OrdinalIgnoreCase)
+      } catch {
+        return $false
+      }
+    })
+    if ($running.Count -eq 0) { break }
+    Start-Sleep -Milliseconds 250
+  } while ((Get-Date) -lt $deadline)
+
+  if ($running.Count -gt 0) {
+    Write-UpdateLog "Stopping lingering launcher processes: $($running.ProcessId -join ',')"
+    $running | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Start-Sleep -Milliseconds 750
+  }
+
+  $remaining = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    if (-not $_.ExecutablePath) { return $false }
+    try {
+      $candidate = [System.IO.Path]::GetFullPath($_.ExecutablePath)
+      return $candidate.StartsWith($install + '\', [System.StringComparison]::OrdinalIgnoreCase)
+    } catch {
+      return $false
+    }
+  })
+  if ($remaining.Count -gt 0) {
+    throw "Launcher processes are still using the install folder."
+  }
+
+  Invoke-WithRetry { Rename-Item -LiteralPath $install -NewName $backupLeaf } "Backing up the current installation"
+
+  try {
+    Invoke-WithRetry { Rename-Item -LiteralPath $replacement -NewName $leaf } "Activating the new installation"
+  } catch {
+    if (Test-Path -LiteralPath $replacement) {
+      Remove-Item -LiteralPath $replacement -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (-not (Test-Path -LiteralPath $install) -and (Test-Path -LiteralPath $backup)) {
+      Rename-Item -LiteralPath $backup -NewName $leaf
+    }
     throw
   }
 
   $exePath = Join-Path $install $ExeName
   Start-Process -FilePath $exePath -WorkingDirectory $install
+  Start-Sleep -Milliseconds 750
   Remove-Item -LiteralPath $backup -Recurse -Force -ErrorAction SilentlyContinue
   Write-UpdateLog "Update applied and launcher restarted."
 } catch {
@@ -1958,10 +2013,10 @@ async function updateLauncher() {
       throw new Error(`Release v${latestVersion} does not include a Windows portable ZIP.`);
     }
 
-    const updateRoot = path.join(app.getPath("userData"), "updates", latestVersion);
+    const updateSession = `${latestVersion}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const updateRoot = path.join(app.getPath("userData"), "updates", updateSession);
     const zipPath = path.join(updateRoot, asset.name || `BellwrightModLauncher-v${latestVersion}.zip`);
     const extractedRoot = path.join(updateRoot, "extracted");
-    await fs.rm(updateRoot, { recursive: true, force: true });
     await ensureDirectory(updateRoot);
 
     sendUpdateProgress({ phase: "download", percent: 0, message: `Downloading v${latestVersion}...` });
