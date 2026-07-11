@@ -6,7 +6,7 @@
 - Isolated each download in a unique staging folder to avoid locked-file failures on retry.
 - Waits for the complete old launcher process tree before atomically replacing the installation.
 - Preserves an external update log and restores the previous installation if activation fails.
-- Upgrading from v0.3.0 requires one manual download because the broken updater exits before its installer process starts; updates from v0.4.1 onward are automatic again.
+- Upgrading from v0.3.0 or v0.4.0 requires one manual download because their updater exits before its installer process starts; updates from v0.4.1 onward are automatic again.
 
 ## [0.4.0] - 2026-07-10
 

@@ -34,7 +34,7 @@ Use the latest Windows portable ZIP from the GitHub Releases page.
 
 Unzip it anywhere and run `BellwrightModLauncher.exe`.
 
-**Upgrading from v0.3.0:** its built-in updater downloads the new package but cannot keep the detached installer alive after the old launcher closes. Close v0.3.0, download v0.4.1 or newer manually, extract it, and run the new executable once. Updates from v0.4.1 onward use the repaired updater and do not require this workaround.
+**Upgrading from v0.3.0 or v0.4.0:** their built-in updater downloads the new package but cannot keep the detached installer alive after the old launcher closes. Close the old launcher, download v0.4.1 or newer manually, extract it, and run the new executable once. Updates from v0.4.1 onward use the repaired updater and do not require this workaround.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 
