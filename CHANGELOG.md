@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.1] - 2026-07-12
+
+- Fixed the updater crashing with `TypeError: crypto.randomBytes is not a function` before downloading a release.
+- Added regression coverage requiring the main process to use Node's explicit `node:crypto` implementation.
+- Versions through v0.5.0 require one manual download of v0.5.1 because the broken updater fails before it can install its own repair. Automatic updates work again from v0.5.1 onward.
+
 ## [0.5.0] - 2026-07-12
 
 - Fixed large mod collections making the entire launcher and its text microscopically small.

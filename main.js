@@ -3,6 +3,7 @@ const fsNative = require("fs");
 const fs = require("fs/promises");
 const path = require("path");
 const childProcess = require("child_process");
+const nodeCrypto = require("node:crypto");
 const https = require("https");
 const zlib = require("zlib");
 const packageInfo = require("./package.json");
@@ -2111,7 +2112,7 @@ async function updateLauncher() {
       throw new Error(`Release v${latestVersion} does not include a Windows portable ZIP.`);
     }
 
-    const updateSession = `${latestVersion}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+    const updateSession = `${latestVersion}-${Date.now()}-${nodeCrypto.randomBytes(4).toString("hex")}`;
     const updateRoot = path.join(app.getPath("userData"), "updates", updateSession);
     const zipPath = path.join(updateRoot, asset.name || `BellwrightModLauncher-v${latestVersion}.zip`);
     const extractedRoot = path.join(updateRoot, "extracted");

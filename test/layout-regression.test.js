@@ -6,6 +6,13 @@ const test = require("node:test");
 const root = path.resolve(__dirname, "..");
 const renderer = fs.readFileSync(path.join(root, "renderer", "renderer.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "renderer", "styles.css"), "utf8");
+const main = fs.readFileSync(path.join(root, "main.js"), "utf8");
+
+test("updater uses Node crypto instead of Electron's Web Crypto global", () => {
+  assert.match(main, /const nodeCrypto = require\("node:crypto"\);/);
+  assert.match(main, /nodeCrypto\.randomBytes\(4\)/);
+  assert.doesNotMatch(main, /(?<!nodeCrypto\.)crypto\.randomBytes\(/);
+});
 
 test("never scales the complete launcher to fit the mod count", () => {
   assert.doesNotMatch(renderer, /\.style\.zoom|fitContentToWindow|--content-scale/);
