@@ -21,6 +21,8 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 - Load trusted native runtime mods automatically after Bellwright reaches the main menu.
 - Block modified, unknown, or game-incompatible native payloads before execution.
 - Save and load named active-mod presets, including load order.
+- Configure compatible asset-only mods from a launcher-provided settings menu, with no script extender required.
+- Preserve selected mod options in named and shared presets and restore them after Workshop updates.
 - Share presets as compact `BWL1` codes and preview imported mod availability before saving.
 - Change active mod load priority through Bellwright's `modloadorder.json`.
 - Show active mod conflicts from shared assets listed in `modinfo.json`.
@@ -48,7 +50,9 @@ Trusted native mods include a `native-runtime.json` manifest. The launcher verif
 
 Version 0.4.0 intentionally allows one active native mod at a time. A later shared host can safely multiplex several native plugins without relying on Windows to distinguish identically named staged DLLs.
 
-Presets store the currently active local and Workshop mods by folder/source and load order. Loading a preset changes the active mod set and priority order to match it, so Bellwright must be closed.
+Presets store the currently active local and Workshop mods by folder/source, load order, and compatible launcher settings. Loading a preset changes the active mod set, options, and priority order to match it, so Bellwright must be closed.
+
+Compatible asset-only mods can ship a schema-versioned `launcher-settings.json` plus signed package variants inside their own folder. Variant payloads use a non-mountable `.variant` suffix until selected. The launcher validates every declared path and SHA-256 hash, stages the complete replacement set, and rolls back if a swap fails. Settings are never changed while Bellwright is running. Before launch, saved choices are reapplied when a Workshop update has restored the default package.
 
 Conflict details are based on the asset metadata supplied by each mod's `modinfo.json`. They identify likely asset-level conflicts, but they cannot prove every possible gameplay or Blueprint logic conflict.
 

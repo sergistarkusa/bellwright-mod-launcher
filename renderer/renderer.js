@@ -1,5 +1,4 @@
 const availableList = document.querySelector("#availableList");
-const shell = document.querySelector(".shell");
 const windowTitlebar = document.querySelector("#windowTitlebar");
 const windowMinimizeButton = document.querySelector("#windowMinimizeButton");
 const windowCloseButton = document.querySelector("#windowCloseButton");
@@ -51,6 +50,14 @@ const sharePreviewName = document.querySelector("#sharePreviewName");
 const sharePreviewCounts = document.querySelector("#sharePreviewCounts");
 const sharePreviewWarning = document.querySelector("#sharePreviewWarning");
 const shareModList = document.querySelector("#shareModList");
+const settingsModalBackdrop = document.querySelector("#settingsModalBackdrop");
+const settingsModalTitle = document.querySelector("#settingsModalTitle");
+const settingsModalModName = document.querySelector("#settingsModalModName");
+const settingsModalCloseButton = document.querySelector("#settingsModalCloseButton");
+const settingsModalCancelButton = document.querySelector("#settingsModalCancelButton");
+const settingsModalApplyButton = document.querySelector("#settingsModalApplyButton");
+const settingsModalWarning = document.querySelector("#settingsModalWarning");
+const settingsFields = document.querySelector("#settingsFields");
 const toast = document.querySelector("#toast");
 const conflictTooltip = document.querySelector("#conflictTooltip");
 const dropColumns = [...document.querySelectorAll(".modColumn")];
@@ -62,8 +69,8 @@ let toastTimer = null;
 let pendingModal = null;
 let pendingGameRunningState = null;
 let gameStateRefreshRunning = false;
-let fitContentFrame = null;
 let inspectedShareCode = null;
+let settingsModalMod = null;
 
 const icons = {
   power: '<svg viewBox="0 0 24 24"><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" /></svg>',
@@ -72,7 +79,79 @@ const icons = {
   down: '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></svg>',
   alert: '<svg viewBox="0 0 24 24"><path d="M12 9v4" /><path d="M12 17h.01" /><path d="M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0Z" /></svg>',
   external: '<svg viewBox="0 0 24 24"><path d="M15 3h6v6" /><path d="m10 14 11-11" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>'
+  ,settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></svg>'
 };
+
+function closeSettingsModal() {
+  settingsModalBackdrop.hidden = true;
+  settingsFields.innerHTML = "";
+  settingsModalMod = null;
+}
+
+function openSettingsModal(mod) {
+  const groups = mod.launcherSettings?.groups || [];
+  if (!groups.length) {
+    return;
+  }
+  settingsModalMod = mod;
+  settingsModalTitle.textContent = "Mod settings";
+  settingsModalModName.textContent = mod.title;
+  settingsFields.innerHTML = "";
+  for (const group of groups) {
+    const field = document.createElement("label");
+    field.className = "settingsField";
+    const title = document.createElement("strong");
+    title.textContent = group.label;
+    const description = document.createElement("span");
+    description.textContent = group.description;
+    const select = document.createElement("select");
+    select.dataset.groupId = group.id;
+    for (const option of group.options) {
+      const element = document.createElement("option");
+      element.value = option.id;
+      element.textContent = option.description ? `${option.label} — ${option.description}` : option.label;
+      element.selected = option.id === group.selectedOption;
+      select.appendChild(element);
+    }
+    field.append(title, description, select);
+    settingsFields.appendChild(field);
+  }
+  settingsModalWarning.hidden = !state.gameRunning;
+  settingsModalWarning.textContent = state.gameRunning ? "Close Bellwright before changing mod settings." : "";
+  settingsModalApplyButton.disabled = busy || state.gameRunning;
+  settingsModalBackdrop.hidden = false;
+}
+
+async function applySettingsModal() {
+  if (!settingsModalMod || busy || state.gameRunning) {
+    return;
+  }
+  const mod = settingsModalMod;
+  const changes = [...settingsFields.querySelectorAll("select")]
+    .map((select) => ({ groupId: select.dataset.groupId, optionId: select.value }))
+    .filter(({ groupId, optionId }) => mod.launcherSettings.groups.find((group) => group.id === groupId)?.selectedOption !== optionId);
+  if (!changes.length) {
+    closeSettingsModal();
+    return;
+  }
+  try {
+    setBusy(true);
+    for (const change of changes) {
+      state = await window.bellwrightMods.setVariant({
+        source: mod.source,
+        folderName: mod.folderName,
+        ...change
+      });
+    }
+    closeSettingsModal();
+    render();
+    showToast(`${mod.title} settings applied.`);
+  } catch (error) {
+    showToast(error.message || String(error), true);
+  } finally {
+    setBusy(false);
+  }
+}
 
 function showToast(message, error = false) {
   clearTimeout(toastTimer);
@@ -92,13 +171,11 @@ function showUpdateProgress(progress) {
   const percent = Number.isFinite(progress.percent) ? Math.max(0, Math.min(progress.percent, 100)) : 8;
   updateProgressPercent.textContent = Number.isFinite(progress.percent) ? `${percent}%` : "";
   updateProgressBar.style.width = `${percent}%`;
-  scheduleFitContent();
 }
 
 function hideUpdateProgressSoon() {
   setTimeout(() => {
     updateProgress.hidden = true;
-    scheduleFitContent();
   }, 1800);
 }
 
@@ -176,48 +253,15 @@ function setBusy(value) {
   document.querySelectorAll(".orderButton").forEach((button) => {
     button.disabled = value || state?.gameRunning || button.dataset.blocked === "true";
   });
+  document.querySelectorAll(".settingsButton").forEach((button) => {
+    button.disabled = value;
+  });
   document.querySelectorAll(".modCard").forEach((card) => {
     card.draggable = !(value || state?.gameRunning);
   });
   if (!value && pendingGameRunningState !== null) {
     queueMicrotask(flushPendingGameRunningState);
   }
-}
-
-function fitContentToWindow() {
-  fitContentFrame = null;
-  const horizontalSpace = Math.max(1, window.innerWidth - 44);
-  const bottomGap = 10;
-  const fits = (scale) => {
-    shell.style.zoom = String(scale);
-    shell.style.width = `${horizontalSpace / scale}px`;
-    return shell.getBoundingClientRect().bottom <= window.innerHeight - bottomGap;
-  };
-
-  let scale = 1;
-  if (!fits(scale)) {
-    let low = 0.1;
-    let high = 1;
-    for (let pass = 0; pass < 12; pass += 1) {
-      const candidate = (low + high) / 2;
-      if (fits(candidate)) {
-        low = candidate;
-      } else {
-        high = candidate;
-      }
-    }
-    scale = low;
-    fits(scale);
-  }
-
-  shell.style.setProperty("--content-scale", scale.toFixed(4));
-}
-
-function scheduleFitContent() {
-  if (fitContentFrame !== null) {
-    cancelAnimationFrame(fitContentFrame);
-  }
-  fitContentFrame = requestAnimationFrame(() => requestAnimationFrame(fitContentToWindow));
 }
 
 function getStatusLabel(mod) {
@@ -239,7 +283,8 @@ function getNativeBadge(mod) {
   }
   const errorPhases = new Set(["invalid", "missing", "untrusted", "blocked", "incompatible", "failed"]);
   const className = errorPhases.has(mod.nativeRuntime.phase) ? "nativeError" : "native";
-  return `<span class="pill ${className}" title="${escapeHtml(mod.nativeRuntime.message || "Native runtime mod")}">${escapeHtml(mod.nativeRuntime.label || "Native")}</span>`;
+  const label = escapeHtml(mod.nativeRuntime.label || "Native runtime");
+  return `<span class="nativeStateBadge ${className}" title="${escapeHtml(mod.nativeRuntime.message || "Native runtime mod")}" aria-label="${label}">N</span>`;
 }
 
 function renderNativeRuntime(runtime) {
@@ -558,7 +603,6 @@ function render() {
   renderColumn(activeList, activeEmpty, visibleActive);
   renderColumn(availableList, availableEmpty, visibleAvailable);
   setBusy(busy);
-  scheduleFitContent();
 }
 
 function filterMods(mods, query) {
@@ -620,6 +664,11 @@ function renderColumn(list, empty, mods) {
             <button class="orderButton" type="button" data-direction="1" data-blocked="${activeIndex >= orderedActiveMods.length - 1}" title="Move later" aria-label="Move later">${icons.down}</button>
           </div>`
         : "";
+    const settingsGroup = mod.launcherSettings?.groups?.[0];
+    const selectedSetting = settingsGroup?.options.find((option) => option.id === settingsGroup.selectedOption);
+    const settingsButton = settingsGroup
+      ? `<button class="settingsButton" type="button" title="Mod settings: ${escapeHtml(selectedSetting?.label || settingsGroup.selectedOption)}" aria-label="Open mod settings">${icons.settings}</button>`
+      : "";
     const note = mod.nativeRuntime && ["invalid", "missing", "untrusted", "blocked"].includes(mod.nativeRuntime.phase)
       ? mod.nativeRuntime.message
       : state.gameRunning
@@ -637,8 +686,11 @@ function renderColumn(list, empty, mods) {
           <h2>${escapeHtml(mod.title)}</h2>
           <div class="folderName">${escapeHtml(mod.modName || mod.displayFolderName || mod.folderName)}</div>
         </div>
+      </div>
+      <div class="modBadges">
         ${conflictBadge}
         ${nativeBadge}
+        ${settingsButton}
         <span class="pill ${status.className}">${status.text}</span>
       </div>
       <div class="cardActions">
@@ -711,6 +763,15 @@ function renderColumn(list, empty, mods) {
       event.stopPropagation();
       moveMod(mod, mod.status === "active" ? "available" : "active");
     });
+
+    const settingsElement = card.querySelector(".settingsButton");
+    if (settingsElement) {
+      settingsElement.disabled = busy;
+      settingsElement.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openSettingsModal(mod);
+      });
+    }
 
     card.querySelectorAll(".orderButton").forEach((orderButton) => {
       orderButton.disabled = busy || state.gameRunning || orderButton.dataset.blocked === "true";
@@ -1123,6 +1184,15 @@ shareModalBackdrop.addEventListener("click", (event) => {
   }
 });
 
+settingsModalCloseButton.addEventListener("click", closeSettingsModal);
+settingsModalCancelButton.addEventListener("click", closeSettingsModal);
+settingsModalApplyButton.addEventListener("click", applySettingsModal);
+settingsModalBackdrop.addEventListener("click", (event) => {
+  if (event.target === settingsModalBackdrop) {
+    closeSettingsModal();
+  }
+});
+
 folderButton.addEventListener("click", async () => {
   try {
     await window.bellwrightMods.openModsFolder();
@@ -1177,7 +1247,6 @@ searchInput.addEventListener("input", render);
 
 window.addEventListener("resize", () => {
   hideModTooltip();
-  scheduleFitContent();
 });
 window.addEventListener("scroll", hideModTooltip, true);
 

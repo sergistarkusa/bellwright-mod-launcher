@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0] - 2026-07-12
+
+- Fixed large mod collections making the entire launcher and its text microscopically small.
+- Replaced global auto-scaling with independently scrollable Available and Active columns.
+- Compacted the static header, status, search, and preset controls to leave substantially more room for mod lists.
+- Stabilized card columns so badges and optional settings no longer shift action buttons or wrap mod titles.
+- Added Chromium layout regression checks for 10, 50, 100, and 200 active mods.
+- Added a settings button for compatible asset-only mods.
+- Added schema-versioned signed package variants with SHA-256 verification, atomic staging, and rollback.
+- Blocked settings changes while Bellwright is running.
+- Saved mod settings in local presets and shared `BWL1` preset codes.
+- Reapplied saved settings before game launch when a Workshop update restored default files.
+- Added four automated safety and switching tests for the variant system.
+
 ## [0.4.1] - 2026-07-10
 
 - Fixed launcher updates that could close without installing or restarting.

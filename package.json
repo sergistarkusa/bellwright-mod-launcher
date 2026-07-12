@@ -1,6 +1,6 @@
 {
   "name": "bellwright-mod-launcher",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Small local mod launcher for Bellwright.",
   "main": "main.js",
   "repository": {
@@ -13,6 +13,8 @@
   },
   "scripts": {
     "start": "electron .",
+    "test": "node --test test/*.test.js",
+    "test:layout": "electron scripts/verify-large-list-layout.js",
     "package:win": "powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1"
   },
   "devDependencies": {

@@ -7,6 +7,7 @@ const https = require("https");
 const zlib = require("zlib");
 const packageInfo = require("./package.json");
 const { NativeRuntimeManager } = require("./native-runtime");
+const { applyVariantOption, inspectVariantSettings, normalizeSelectionMap } = require("./variant-settings");
 
 const GAME_APP_ID = "1812450";
 const DEFAULT_STEAM_ROOT = path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Steam");
@@ -515,6 +516,15 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
   const nativeRuntime = nativeRuntimeManager
     ? nativeRuntimeManager.publicInspection(await nativeRuntimeManager.inspectMod(folderPath, status === "active"))
     : null;
+  const settingsStore = await readModSettingsStore();
+  const settingsKey = modKeyFromParts(options.source || "local", folderName);
+  let launcherSettings = null;
+  let launcherSettingsError = null;
+  try {
+    launcherSettings = await inspectVariantSettings(folderPath, settingsStore.selections[settingsKey]);
+  } catch (error) {
+    launcherSettingsError = error.message || String(error);
+  }
 
   return {
     folderName,
@@ -547,6 +557,8 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
     gameVersion: modInfo?.gameVersion || null,
     enforceSameMods: modInfo?.enforceSameMods || "",
     nativeRuntime,
+    launcherSettings,
+    launcherSettingsError,
     path: folderPath
   };
 }
@@ -1259,12 +1271,67 @@ function getPresetPath() {
   return path.join(app.getPath("userData"), "presets.json");
 }
 
+function getModSettingsPath() {
+  return path.join(app.getPath("userData"), "mod-settings.json");
+}
+
+async function readModSettingsStore() {
+  const store = (await readJson(getModSettingsPath())) || {};
+  const selections = store.selections && typeof store.selections === "object" && !Array.isArray(store.selections)
+    ? Object.fromEntries(Object.entries(store.selections).map(([key, value]) => [key, normalizeSelectionMap(value)]))
+    : {};
+  return { version: 1, selections };
+}
+
+async function writeModSettingsStore(store) {
+  await ensureDirectory(path.dirname(getModSettingsPath()));
+  await fs.writeFile(getModSettingsPath(), `${JSON.stringify({ version: 1, selections: store.selections || {} }, null, 2)}\n`, "utf8");
+}
+
 function modKeyFromParts(source, folderName) {
   return `${source || "local"}:${folderName}`;
 }
 
 function modKey(mod) {
   return modKeyFromParts(mod.source, mod.folderName);
+}
+
+function settingsFromMod(mod) {
+  return Object.fromEntries((mod.launcherSettings?.groups || []).map((group) => [group.id, group.selectedOption]));
+}
+
+async function setModVariant(payload) {
+  await assertGameClosed();
+  const source = payload?.source === "workshop" ? "workshop" : "local";
+  const folderName = String(payload?.folderName || "");
+  assertSafeModName(folderName);
+  const state = await getState();
+  const mod = state.mods.find((candidate) => candidate.source === source && candidate.folderName === folderName);
+  if (!mod) {
+    throw new Error("Mod was not found.");
+  }
+  await applyVariantOption(mod.path, String(payload?.groupId || ""), String(payload?.optionId || ""));
+  const store = await readModSettingsStore();
+  const key = modKey(mod);
+  store.selections[key] = {
+    ...normalizeSelectionMap(store.selections[key]),
+    [String(payload.groupId)]: String(payload.optionId)
+  };
+  await writeModSettingsStore(store);
+  return getState();
+}
+
+async function applySavedVariantSelections() {
+  await assertGameClosed();
+  const state = await getState();
+  const activeMods = state.mods.filter((mod) => mod.status === "active" && mod.launcherSettings?.groups?.length);
+  for (const mod of activeMods) {
+    for (const group of mod.launcherSettings.groups) {
+      if (!group.inSync) {
+        await applyVariantOption(mod.path, group.id, group.selectedOption);
+      }
+    }
+  }
 }
 
 function normalizePresetName(name) {
@@ -1316,7 +1383,8 @@ function normalizeSharedPresetMod(mod) {
       modName,
       title: cleanSharedText(mod?.title, modName),
       steamId,
-      workshopId: folderName
+      workshopId: folderName,
+      settings: normalizeSelectionMap(mod?.settings)
     };
   }
 
@@ -1330,7 +1398,8 @@ function normalizeSharedPresetMod(mod) {
     modName,
     title: cleanSharedText(mod?.title, modName),
     steamId: 0,
-    workshopId: null
+    workshopId: null,
+    settings: normalizeSelectionMap(mod?.settings)
   };
 }
 
@@ -1484,7 +1553,8 @@ async function readPresetStore() {
             modName: mod.modName || mod.displayFolderName || mod.folderName,
             title: mod.title || mod.displayFolderName || mod.folderName,
             steamId: normalizeSteamId(mod.steamId || mod.workshopId || 0),
-            workshopId: mod.workshopId || (mod.steamId ? String(mod.steamId) : null)
+            workshopId: mod.workshopId || (mod.steamId ? String(mod.steamId) : null),
+            settings: normalizeSelectionMap(mod.settings)
           }))
       }))
   };
@@ -1520,7 +1590,8 @@ async function savePreset(payload) {
       modName: mod.modName,
       title: mod.title,
       steamId: mod.steamId || 0,
-      workshopId: mod.workshopId || null
+      workshopId: mod.workshopId || null,
+      settings: settingsFromMod(mod)
     }));
 
   const existing = store.presets.find((preset) => preset.name.toLowerCase() === name.toLowerCase());
@@ -1611,6 +1682,32 @@ async function loadPreset(id) {
   }
 
   currentState = await getState();
+  const settingsStore = await readModSettingsStore();
+  let settingsChanged = 0;
+  for (const savedMod of preset.activeMods) {
+    const selectedSettings = normalizeSelectionMap(savedMod.settings);
+    if (!Object.keys(selectedSettings).length) {
+      continue;
+    }
+    const candidate = currentState.mods.find((mod) => mod.status === "active" && modKey(mod) === modKey(savedMod));
+    if (!candidate?.launcherSettings) {
+      continue;
+    }
+    for (const [groupId, optionId] of Object.entries(selectedSettings)) {
+      const group = candidate.launcherSettings.groups.find((item) => item.id === groupId);
+      if (!group?.options.some((option) => option.id === optionId)) {
+        continue;
+      }
+      if (group.appliedOption !== optionId) {
+        await applyVariantOption(candidate.path, groupId, optionId);
+        settingsChanged += 1;
+      }
+    }
+    settingsStore.selections[modKey(candidate)] = selectedSettings;
+  }
+  await writeModSettingsStore(settingsStore);
+
+  currentState = await getState();
   const finalActiveMods = currentState.mods.filter((mod) => mod.status === "active");
   const finalActiveByKey = new Map(finalActiveMods.map((mod) => [modKey(mod), mod]));
   const orderedActiveMods = [];
@@ -1639,6 +1736,7 @@ async function loadPreset(id) {
     preset: publicPreset(preset),
     state: await getState(),
     changed,
+    settingsChanged,
     orderChanged,
     missing
   };
@@ -2127,6 +2225,10 @@ ipcMain.handle("mods:setLoadOrder", async (_event, payload) => {
   return setLoadOrder(payload);
 });
 
+ipcMain.handle("mods:setVariant", async (_event, payload) => {
+  return setModVariant(payload);
+});
+
 ipcMain.handle("mods:showTooltip", async (_event, payload) => {
   return showTooltipWindow(payload);
 });
@@ -2143,6 +2245,7 @@ ipcMain.handle("mods:openModsFolder", async () => {
 });
 
 ipcMain.handle("mods:launchGame", async () => {
+  await applySavedVariantSelections();
   await shell.openExternal(`steam://rungameid/${GAME_APP_ID}`);
   return true;
 });

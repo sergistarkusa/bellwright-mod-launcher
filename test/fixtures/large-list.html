@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bellwright Launcher Large List Fixture</title>
+    <link rel="stylesheet" href="../../renderer/styles.css" />
+  </head>
+  <body>
+    <header class="windowTitlebar">
+      <div class="windowIdentity"><span>Bellwright Mod Launcher — layout fixture</span></div>
+    </header>
+    <main class="shell">
+      <section class="topbar">
+        <div class="brand"><div><h1>Bellwright Mod Launcher</h1><p>Large-list regression fixture</p></div></div>
+        <div class="actions"><button class="launchButton">Launch</button></div>
+      </section>
+      <section class="statusStrip">
+        <div class="statusItem"><span class="label">Game</span><strong>Closed</strong></div>
+        <div class="statusItem"><span class="label">Active</span><strong id="activeTotal">0</strong></div>
+        <div class="statusItem"><span class="label">Available</span><strong id="availableTotal">0</strong></div>
+      </section>
+      <section class="controls">
+        <div class="searchBox"><input type="search" placeholder="Search mods" /></div>
+        <section class="presetSection">
+          <select><option>Example preset (200)</option></select>
+          <button class="presetButton">Save</button><button class="presetButton">Load</button>
+          <button class="presetIconButton">↗</button><button class="presetIconButton">↓</button><button class="presetIconButton">×</button>
+        </section>
+        <section class="aboutSection">
+          <strong>FSD Software</strong><span>v0.5.0</span><button class="updateButton">Update</button>
+          <button class="donateButton">Donate</button><button class="donateButton">Discord</button>
+        </section>
+      </section>
+      <section class="board">
+        <section class="modColumn">
+          <div class="columnHeader"><div><h2>Available</h2><p>Installed but not active</p></div><strong id="availableCount">0</strong></div>
+          <div id="availableList" class="columnList"></div>
+        </section>
+        <section class="modColumn activeColumn">
+          <div class="columnHeader"><div><h2>Active</h2><p>Loaded by Bellwright</p></div><strong id="activeCount">0</strong></div>
+          <div id="activeList" class="columnList"></div>
+        </section>
+      </section>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const activeCount = Number(params.get("active") || 200);
+      const availableCount = Number(params.get("available") || 25);
+      const makeCard = (index, status) => {
+        const card = document.createElement("article");
+        card.className = "modCard";
+        card.innerHTML = `<div class="modHeader"><span class="loadOrderBadge">${String(index + 1).padStart(2, "0")}</span><div class="modTitle"><h2>${status} Test Mod ${index + 1}</h2><div class="folderName">FixtureMod_${index + 1}</div></div></div><div class="modBadges"><span class="pill active">${status}</span></div><div class="cardActions"><span class="orderControls"><button class="orderButton">↑</button><button class="orderButton">↓</button></span><button class="toggleButton disable">Ⅱ</button></div>`;
+        return card;
+      };
+      for (let index = 0; index < activeCount; index += 1) activeList.appendChild(makeCard(index, "Active"));
+      for (let index = 0; index < availableCount; index += 1) availableList.appendChild(makeCard(index, "Available"));
+      document.querySelector("#activeCount").textContent = activeCount;
+      document.querySelector("#activeTotal").textContent = activeCount;
+      document.querySelector("#availableCount").textContent = availableCount;
+      document.querySelector("#availableTotal").textContent = availableCount;
+    </script>
+  </body>
+</html>

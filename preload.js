@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld("bellwrightMods", {
   enable: (payload) => ipcRenderer.invoke("mods:enable", payload),
   disable: (payload) => ipcRenderer.invoke("mods:disable", payload),
   setLoadOrder: (payload) => ipcRenderer.invoke("mods:setLoadOrder", payload),
+  setVariant: (payload) => ipcRenderer.invoke("mods:setVariant", payload),
   showTooltip: (payload) => ipcRenderer.invoke("mods:showTooltip", payload),
   hideTooltip: () => ipcRenderer.invoke("mods:hideTooltip"),
   onTooltip: (callback) => ipcRenderer.on("tooltip:setMod", (_event, mod) => callback(mod)),

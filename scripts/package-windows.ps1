@@ -38,6 +38,7 @@ $appRoot = Join-Path $outDir "resources\app"
 New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot "main.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "native-runtime.js") -Destination $appRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot "variant-settings.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "preload.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "package.json") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "package-lock.json") -Destination $appRoot
