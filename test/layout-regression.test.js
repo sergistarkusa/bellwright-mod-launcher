@@ -14,6 +14,14 @@ test("updater uses Node crypto instead of Electron's Web Crypto global", () => {
   assert.doesNotMatch(main, /(?<!nodeCrypto\.)crypto\.randomBytes\(/);
 });
 
+test("updater is relaunched after Electron exits instead of dying as its child", () => {
+  const handoff = main.match(/async function startUpdaterAndQuit[\s\S]*?\n}\n\nasync function updateLauncher/)?.[0] || "";
+  assert.match(handoff, /app\.relaunch\(\{/);
+  assert.match(handoff, /execPath: powershellPath/);
+  assert.match(handoff, /app\.exit\(0\)/);
+  assert.doesNotMatch(handoff, /childProcess\.spawn/);
+});
+
 test("never scales the complete launcher to fit the mod count", () => {
   assert.doesNotMatch(renderer, /\.style\.zoom|fitContentToWindow|--content-scale/);
   assert.doesNotMatch(renderer, /devicePixelRatio/);

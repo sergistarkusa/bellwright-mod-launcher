@@ -2055,9 +2055,25 @@ async function startUpdaterAndQuit(stagedAppRoot, updateRoot) {
   const installDir = getInstallDirectory();
   const scriptPath = await writeUpdaterScript(updateRoot);
   const logPath = path.join(updateRoot, "apply-update.log");
-  const child = childProcess.spawn(
-    "powershell.exe",
-    [
+  const powershellPath = path.join(
+    process.env.SystemRoot || "C:\\Windows",
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe"
+  );
+  if (!(await exists(powershellPath))) {
+    throw new Error(`PowerShell was not found at ${powershellPath}`);
+  }
+
+  await fs.writeFile(
+    logPath,
+    `${new Date().toISOString()} Update scheduled through Electron relaunch.\n`,
+    "utf8"
+  );
+  app.relaunch({
+    execPath: powershellPath,
+    args: [
       "-NoProfile",
       "-ExecutionPolicy",
       "Bypass",
@@ -2073,15 +2089,9 @@ async function startUpdaterAndQuit(stagedAppRoot, updateRoot) {
       String(process.pid),
       "-LogPath",
       logPath
-    ],
-    {
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true
-    }
-  );
-  child.unref();
-  app.quit();
+    ]
+  });
+  app.exit(0);
 }
 
 async function updateLauncher() {

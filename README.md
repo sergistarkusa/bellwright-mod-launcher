@@ -36,7 +36,7 @@ Use the latest Windows portable ZIP from the GitHub Releases page.
 
 Unzip it anywhere and run `BellwrightModLauncher.exe`.
 
-**Upgrading from v0.5.0 or older:** close the old launcher, download v0.5.1 or newer manually, extract it, and run the new executable once. Older builds either cannot keep the detached installer alive or fail while creating the update session. Automatic updates work again from v0.5.1 onward.
+**Upgrading from v0.5.2 or older:** close the old launcher, download v0.5.3 or newer manually, extract it, and run the new executable once. Older builds may download an update successfully but lose the installer when Electron exits. Automatic updates use the repaired post-exit handoff from v0.5.3 onward.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 

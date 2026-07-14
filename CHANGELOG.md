@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3] - 2026-07-14
+
+- Fixed the downloaded update installer being terminated together with Electron before it could replace the launcher folder.
+- Replaced the detached child-process handoff with Electron's post-exit relaunch mechanism.
+- Added regression coverage for the updater handoff and verified a complete v0.5.1-to-v0.5.2 replacement on a disposable installation.
+- Versions through v0.5.2 may require one manual download of v0.5.3; automatic updates use the repaired handoff from v0.5.3 onward.
+
 ## [0.5.2] - 2026-07-14
 
 - Added trust for the repaired Settlement Immigration v1.0.1 native payload.
