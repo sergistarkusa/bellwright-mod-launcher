@@ -12,7 +12,7 @@ const TRUSTED_NATIVE_MODS = new Map([
     "fsd.settlement-immigration",
     {
       publisher: "FSD Software",
-      payloadHashes: new Set(["6dc0fbf5bd7358e0ce0dcdcb14e5c2c71c979260cabf2a520c89ba237ca973e8"]),
+      payloadHashes: new Set(["4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487"]),
       gameHashes: new Set(["5d77d16d59831f684dce32d513db9cdc671f6f78d5b67b44f4e8d7b8f816b3e1"])
     }
   ]

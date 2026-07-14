@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.2] - 2026-07-14
+
+- Added trust for the repaired Settlement Immigration v1.0.1 native payload.
+- Removed trust for the faulty v1.0.0 payload so the launcher cannot load the known crashing build.
+
 ## [0.5.1] - 2026-07-12
 
 - Fixed the updater crashing with `TypeError: crypto.randomBytes is not a function` before downloading a release.
