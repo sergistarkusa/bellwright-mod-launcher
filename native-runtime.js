@@ -336,7 +336,7 @@ class NativeRuntimeManager {
       this.setStatus({
         phase: "loaded",
         label: "Loaded",
-        message: `${inspections.length} native mod${inspections.length === 1 ? "" : "s"} loaded`,
+        message: `${inspections.length} native mod${inspections.length === 1 ? "" : "s"} loaded in Bellwright PID ${gameProcess.pid}`,
         loaded: inspections.length,
         total: inspections.length,
         mods: inspections.map((item) => ({ ...this.publicInspection(item), phase: "loaded", label: "Runtime loaded" }))
@@ -361,7 +361,7 @@ class NativeRuntimeManager {
       this.setStatus({
         phase: "loaded",
         label: "Loaded",
-        message: `${inspections.length} native mod${inspections.length === 1 ? "" : "s"} loaded`,
+        message: `${inspections.length} native mod${inspections.length === 1 ? "" : "s"} loaded in Bellwright PID ${gameProcess.pid}`,
         loaded: inspections.length,
         total: inspections.length,
         mods: inspections.map((item) => ({ ...this.publicInspection(item), phase: "loaded", label: "Runtime loaded" }))

@@ -18,7 +18,7 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 - Refresh the running/closed game state automatically.
 - Open the Bellwright mods folder.
 - Launch Bellwright through Steam.
-- Load trusted native runtime mods automatically after Bellwright reaches the main menu.
+- Load trusted native runtime mods automatically after Bellwright reaches the main menu, even if the launcher window is closed while the game starts.
 - Block modified, unknown, or game-incompatible native payloads before execution.
 - Save and load named active-mod presets, including load order.
 - Configure compatible asset-only mods from a launcher-provided settings menu, with no script extender required.
@@ -38,6 +38,8 @@ Unzip it anywhere and run `BellwrightModLauncher.exe`.
 
 **Upgrading from v0.5.2 or older:** close the old launcher, download v0.5.3 or newer manually, extract it, and run the new executable once. Older builds may download an update successfully but lose the installer when Electron exits. Automatic updates use the repaired post-exit handoff from v0.5.3 onward.
 
+**Native mod users should install v0.5.4 or newer.** The launcher now remains active in the background until native runtime loading is complete and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
+
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 
 ## Notes
@@ -47,6 +49,8 @@ This is an unofficial community tool and is not affiliated with Donkey Crew, Sna
 The launcher moves mod folders between active and disabled locations, updates `modinfo.json` active flags when possible, and keeps disabled local mods outside `Content/Mods` so Bellwright does not mount them accidentally. Close Bellwright before changing mod state or load order.
 
 Trusted native mods include a `native-runtime.json` manifest. The launcher verifies the payload hash and current Bellwright executable, stages the DLL in its private runtime cache, and uses its bundled injector only after the main menu has loaded. Workshop packages cannot provide their own executable injector.
+
+Bellwright must be started while the launcher is running whenever a native mod is enabled. Launching the game directly from Steam while the launcher is not running cannot load native Workshop payloads. Launching through the launcher is the supported path.
 
 Version 0.4.0 intentionally allows one active native mod at a time. A later shared host can safely multiplex several native plugins without relying on Windows to distinguish identically named staged DLLs.
 

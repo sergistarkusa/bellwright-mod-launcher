@@ -49,6 +49,7 @@ let gameRunningPollTimer = null;
 let gameRunningPollInFlight = false;
 let lastKnownGameRunning = null;
 let nativeRuntimeManager = null;
+let keepAliveForGameLaunchUntil = 0;
 
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
@@ -58,7 +59,7 @@ if (!gotSingleInstanceLock) {
 
 app.on("second-instance", () => {
   if (!mainWindow) {
-    return;
+    createWindow();
   }
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
@@ -240,6 +241,9 @@ async function pollGameRunning() {
   try {
     const gameProcess = await getGameProcess();
     const gameRunning = Boolean(gameProcess);
+    if (gameRunning) {
+      keepAliveForGameLaunchUntil = 0;
+    }
     if (lastKnownGameRunning !== null && gameRunning !== lastKnownGameRunning && mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send("mods:gameRunningChanged", gameRunning);
     }
@@ -247,6 +251,9 @@ async function pollGameRunning() {
     if (nativeRuntimeManager) {
       const activeModFolders = gameRunning ? await getActiveModFolders() : [];
       await nativeRuntimeManager.handleProcess(gameProcess, activeModFolders);
+    }
+    if (!gameRunning && !mainWindow && Date.now() >= keepAliveForGameLaunchUntil) {
+      app.quit();
     }
   } catch (error) {
     console.error("Game process watcher failed:", error);
@@ -296,7 +303,8 @@ app.on("before-quit", () => {
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
+  const waitingForGame = Date.now() < keepAliveForGameLaunchUntil;
+  if (process.platform !== "darwin" && !lastKnownGameRunning && !waitingForGame) {
     app.quit();
   }
 });
@@ -2257,6 +2265,9 @@ ipcMain.handle("mods:openModsFolder", async () => {
 
 ipcMain.handle("mods:launchGame", async () => {
   await applySavedVariantSelections();
+  // Native runtimes are injected only after Bellwright reaches the main menu.
+  // Keep the process watcher alive if the user closes the launcher meanwhile.
+  keepAliveForGameLaunchUntil = Date.now() + 120000;
   await shell.openExternal(`steam://rungameid/${GAME_APP_ID}`);
   return true;
 });

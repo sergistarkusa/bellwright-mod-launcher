@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.4] - 2026-07-15
+
+- Fixed native mods silently failing when the launcher window was closed before Bellwright reached the main menu.
+- Keep the native-runtime watcher alive in the background while Bellwright is starting or running, then exit automatically after the game closes.
+- Reopen the launcher window when its executable is started again while the background watcher is active.
+- Show the Bellwright process ID in the loaded native-runtime status for unambiguous session verification.
+- Added regression coverage for pending injection, background shutdown, and reopening the hidden launcher.
+
 ## [0.5.3] - 2026-07-14
 
 - Fixed the downloaded update installer being terminated together with Electron before it could replace the launcher folder.
