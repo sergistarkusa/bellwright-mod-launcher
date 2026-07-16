@@ -7,9 +7,10 @@ $version = $packageJson.version
 $electronDist = Join-Path $projectRoot "node_modules\electron\dist"
 $distRoot = Join-Path $projectRoot "dist"
 $releaseRoot = Join-Path $projectRoot "release"
-$outName = "BellwrightModLauncher-v$version-win-x64-portable"
-$outDir = Join-Path $distRoot $outName
-$zipPath = Join-Path $releaseRoot "$outName.zip"
+$archiveName = "BellwrightModLauncher-v$version-win-x64-portable"
+$appFolderName = "BellwrightModLauncher"
+$outDir = Join-Path $distRoot $appFolderName
+$zipPath = Join-Path $releaseRoot "$archiveName.zip"
 
 if (-not (Test-Path -LiteralPath (Join-Path $electronDist "electron.exe"))) {
   throw "Electron runtime not found. Run npm install first."

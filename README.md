@@ -34,11 +34,11 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 
 Use the latest Windows portable ZIP from the GitHub Releases page.
 
-Unzip it anywhere and run `BellwrightModLauncher.exe`.
+Unzip it anywhere and run `BellwrightModLauncher.exe` from the stable `BellwrightModLauncher` folder. The downloaded ZIP filename contains the release version; the application folder does not.
 
 **Upgrading from v0.5.2 or older:** close the old launcher, download v0.5.3 or newer manually, extract it, and run the new executable once. Older builds may download an update successfully but lose the installer when Electron exits. Automatic updates use the repaired post-exit handoff from v0.5.3 onward.
 
-**Native mod users should install v0.5.5 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
+**Native mod users should install v0.5.6 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window. Version 0.5.6 also fixes a Windows portable-update lock that could leave a downloaded update unapplied.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 

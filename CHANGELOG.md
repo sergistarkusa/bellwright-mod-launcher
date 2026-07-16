@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.6] - 2026-07-16
+
+- Fixed Windows self-updates failing after download because the updater inherited the launcher's installation folder as its working directory.
+- The updater now moves to its staging folder before replacing the portable installation.
+- New portable archives keep the version in the ZIP filename while using the stable internal folder name `BellwrightModLauncher`.
+
 ## [0.5.5] - 2026-07-16
 
 - Added launcher-controlled configuration files for trusted native mods without changing their verified payload.

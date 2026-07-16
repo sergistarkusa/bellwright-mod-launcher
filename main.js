@@ -1960,6 +1960,13 @@ function Invoke-WithRetry([scriptblock]$Action, [string]$Description) {
 }
 
 try {
+  $updaterWorkingDir = Split-Path -Parent ([System.IO.Path]::GetFullPath($LogPath))
+  if (Test-Path -LiteralPath $updaterWorkingDir) {
+    Set-Location -LiteralPath $updaterWorkingDir
+  } else {
+    Set-Location -LiteralPath ([System.IO.Path]::GetTempPath())
+  }
+
   $install = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
   $staged = [System.IO.Path]::GetFullPath($StagedAppDir).TrimEnd('\')
   $driveRoot = [System.IO.Path]::GetPathRoot($install).TrimEnd('\')

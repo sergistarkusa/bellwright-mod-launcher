@@ -7,6 +7,7 @@ const root = path.resolve(__dirname, "..");
 const renderer = fs.readFileSync(path.join(root, "renderer", "renderer.js"), "utf8");
 const styles = fs.readFileSync(path.join(root, "renderer", "styles.css"), "utf8");
 const main = fs.readFileSync(path.join(root, "main.js"), "utf8");
+const packageScript = fs.readFileSync(path.join(root, "scripts", "package-windows.ps1"), "utf8");
 
 test("updater uses Node crypto instead of Electron's Web Crypto global", () => {
   assert.match(main, /const nodeCrypto = require\("node:crypto"\);/);
@@ -20,6 +21,24 @@ test("updater is relaunched after Electron exits instead of dying as its child",
   assert.match(handoff, /execPath: powershellPath/);
   assert.match(handoff, /app\.exit\(0\)/);
   assert.doesNotMatch(handoff, /childProcess\.spawn/);
+});
+
+test("updater leaves the installation directory before renaming it", () => {
+  const updater = main.match(/function getUpdaterScriptText\(\)[\s\S]*?\n}\n\nasync function writeUpdaterScript/)?.[0] || "";
+  assert.match(updater, /Set-Location -LiteralPath \$updaterWorkingDir/);
+  assert.match(updater, /Set-Location -LiteralPath \(\[System\.IO\.Path\]::GetTempPath\(\)\)/);
+  assert.ok(
+    updater.indexOf("Set-Location -LiteralPath $updaterWorkingDir")
+      < updater.indexOf("Rename-Item -LiteralPath $install"),
+    "the updater must release its inherited working-directory handle before replacing the install"
+  );
+});
+
+test("portable archive is versioned but its application folder is stable", () => {
+  assert.match(packageScript, /\$archiveName = "BellwrightModLauncher-v\$version-win-x64-portable"/);
+  assert.match(packageScript, /\$appFolderName = "BellwrightModLauncher"/);
+  assert.match(packageScript, /\$zipPath = Join-Path \$releaseRoot "\$archiveName\.zip"/);
+  assert.doesNotMatch(packageScript, /\$outDir = Join-Path \$distRoot \$archiveName/);
 });
 
 test("never scales the complete launcher to fit the mod count", () => {
