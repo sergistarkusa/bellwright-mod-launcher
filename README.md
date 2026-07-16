@@ -28,7 +28,7 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 - Show active mod conflicts from shared assets listed in `modinfo.json`.
 - Update the launcher from the latest GitHub Release with visible download progress.
 - Join the Bellwright Discord section from the app.
-- Support FSD Software through Ko-fi.
+- Support ExcelsiorOne through Ko-fi.
 
 ## Download
 
@@ -36,9 +36,9 @@ Use the latest Windows portable ZIP from the GitHub Releases page.
 
 Unzip it anywhere and run `BellwrightModLauncher.exe` from the stable `BellwrightModLauncher` folder. The downloaded ZIP filename contains the release version; the application folder does not.
 
-**Upgrading from v0.5.5 or older:** close the old launcher, download v0.5.6 or newer manually, extract the stable `BellwrightModLauncher` folder, and run its executable once. Older builds can download an update but may fail while replacing their own installation folder. Automatic updates are repaired from v0.5.6 onward.
+**Upgrading from v0.5.5 or older:** close the old launcher, download v0.5.7 or newer manually, extract the stable `BellwrightModLauncher` folder, and run its executable once. Older builds can download an update but may fail while replacing their own installation folder. Automatic updates are repaired from v0.5.6 onward.
 
-**Native mod users should install v0.5.6 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window. Version 0.5.6 also fixes a Windows portable-update lock that could leave a downloaded update unapplied.
+**Native mod users should install v0.5.7 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window. Version 0.5.6 fixed a Windows portable-update lock that could leave a downloaded update unapplied.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 

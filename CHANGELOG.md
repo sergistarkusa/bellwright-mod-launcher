@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.7] - 2026-07-16
+
+- Changed the public author identity and launcher interface branding to ExcelsiorOne.
+- Added the new Settlement Immigration runtime namespace while retaining a non-public legacy compatibility alias for cached older manifests.
+
 ## [0.5.6] - 2026-07-16
 
 - Fixed Windows self-updates failing after download because the updater inherited the launcher's installation folder as its working directory.

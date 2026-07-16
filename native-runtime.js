@@ -11,25 +11,25 @@ const MAX_CONFIG_BYTES = 4096;
 const GAME_HASH_PRE_HOTFIX = "5d77d16d59831f684dce32d513db9cdc671f6f78d5b67b44f4e8d7b8f816b3e1";
 const GAME_HASH_HOTFIX_2026_07_16 = "a3adc853e56e8a707348027db70ec923909df5a06ab342b8de5f71fca4ea4251";
 
+const SETTLEMENT_IMMIGRATION_TRUST = {
+  publisher: "ExcelsiorOne",
+  payloadHashes: new Set([
+    "4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487",
+    "059d0fc24713d668a014a0233780d53c74aec8ceb55107ac4ecd7d0c4a8ce223",
+    "d73fb57dd1ccbfc0b786a6666f4019aa9e315d84e1e10754b32d5a442c735403",
+    "456b2347f094a04cc34715dcd3169a6cebd21759cc8563aa94070333d5d26626"
+  ]),
+  gameHashesByPayload: new Map([
+    ["4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487", new Set([GAME_HASH_PRE_HOTFIX])],
+    ["059d0fc24713d668a014a0233780d53c74aec8ceb55107ac4ecd7d0c4a8ce223", new Set([GAME_HASH_PRE_HOTFIX])],
+    ["d73fb57dd1ccbfc0b786a6666f4019aa9e315d84e1e10754b32d5a442c735403", new Set([GAME_HASH_PRE_HOTFIX])],
+    ["456b2347f094a04cc34715dcd3169a6cebd21759cc8563aa94070333d5d26626", new Set([GAME_HASH_HOTFIX_2026_07_16])]
+  ])
+};
+
 const TRUSTED_NATIVE_MODS = new Map([
-  [
-    "fsd.settlement-immigration",
-    {
-      publisher: "FSD Software",
-      payloadHashes: new Set([
-        "4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487",
-        "059d0fc24713d668a014a0233780d53c74aec8ceb55107ac4ecd7d0c4a8ce223",
-        "d73fb57dd1ccbfc0b786a6666f4019aa9e315d84e1e10754b32d5a442c735403",
-        "456b2347f094a04cc34715dcd3169a6cebd21759cc8563aa94070333d5d26626"
-      ]),
-      gameHashesByPayload: new Map([
-        ["4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487", new Set([GAME_HASH_PRE_HOTFIX])],
-        ["059d0fc24713d668a014a0233780d53c74aec8ceb55107ac4ecd7d0c4a8ce223", new Set([GAME_HASH_PRE_HOTFIX])],
-        ["d73fb57dd1ccbfc0b786a6666f4019aa9e315d84e1e10754b32d5a442c735403", new Set([GAME_HASH_PRE_HOTFIX])],
-        ["456b2347f094a04cc34715dcd3169a6cebd21759cc8563aa94070333d5d26626", new Set([GAME_HASH_HOTFIX_2026_07_16])]
-      ])
-    }
-  ]
+  ["excelsiorone.settlement-immigration", SETTLEMENT_IMMIGRATION_TRUST],
+  ["fsd.settlement-immigration", { ...SETTLEMENT_IMMIGRATION_TRUST, publisher: null }]
 ]);
 
 const BUNDLED_INJECTOR_HASH = "cd07010b5f3114cd89c115d507bf8fb18f69c21b1b2c50d2f15522bb969faa8e";
@@ -163,7 +163,7 @@ class NativeRuntimeManager {
     }
 
     const trusted = this.trustedNativeMods.get(manifest.id);
-    if (!trusted || trusted.publisher !== manifest.publisher) {
+    if (!trusted || (trusted.publisher && trusted.publisher !== manifest.publisher)) {
       return { ...manifest, phase: "untrusted", label: "Untrusted", message: "Publisher is not trusted by this launcher" };
     }
 

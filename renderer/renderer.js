@@ -375,10 +375,10 @@ function handleNativeRuntimeChanged(runtime) {
 async function loadAppInfo() {
   try {
     const appInfo = await window.bellwrightMods.getAppInfo();
-    aboutMaker.textContent = appInfo.maker || "FSD Software";
+    aboutMaker.textContent = appInfo.maker || "ExcelsiorOne";
     appVersion.textContent = `v${appInfo.version || "0.1.0"}`;
     donateButton.disabled = !appInfo.donateUrl;
-    donateButton.title = appInfo.donateUrl ? "Support FSD Software" : "Ko-fi link is not configured";
+    donateButton.title = appInfo.donateUrl ? "Support ExcelsiorOne" : "Ko-fi link is not configured";
     discordButton.disabled = !appInfo.discordUrl;
     discordButton.title = appInfo.discordUrl ? "Join the Bellwright Discord section" : "Discord link is not configured";
     updateButton.title = appInfo.updateSupported

@@ -119,5 +119,7 @@ test("launcher resolves the installed Bellwright executable for native runtime c
 test("trusted native runtime records pair the hotfix game and payload hashes", () => {
   assert.match(nativeRuntime, /a3adc853e56e8a707348027db70ec923909df5a06ab342b8de5f71fca4ea4251/);
   assert.match(nativeRuntime, /456b2347f094a04cc34715dcd3169a6cebd21759cc8563aa94070333d5d26626/);
+  assert.match(nativeRuntime, /excelsiorone\.settlement-immigration/);
+  assert.match(nativeRuntime, /publisher: "ExcelsiorOne"/);
   assert.match(nativeRuntime, /gameHashesByPayload/);
 });

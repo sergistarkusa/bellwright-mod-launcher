@@ -2178,7 +2178,7 @@ async function updateLauncher() {
 
 function getAppInfo() {
   return {
-    maker: "FSD Software",
+    maker: "ExcelsiorOne",
     version: packageInfo.version,
     donateUrl: DONATE_URL,
     discordUrl: DISCORD_URL,

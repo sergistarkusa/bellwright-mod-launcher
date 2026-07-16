@@ -8,6 +8,8 @@ const renderer = fs.readFileSync(path.join(root, "renderer", "renderer.js"), "ut
 const styles = fs.readFileSync(path.join(root, "renderer", "styles.css"), "utf8");
 const main = fs.readFileSync(path.join(root, "main.js"), "utf8");
 const packageScript = fs.readFileSync(path.join(root, "scripts", "package-windows.ps1"), "utf8");
+const index = fs.readFileSync(path.join(root, "renderer", "index.html"), "utf8");
+const license = fs.readFileSync(path.join(root, "LICENSE"), "utf8");
 
 test("updater uses Node crypto instead of Electron's Web Crypto global", () => {
   assert.match(main, /const nodeCrypto = require\("node:crypto"\);/);
@@ -39,6 +41,15 @@ test("portable archive is versioned but its application folder is stable", () =>
   assert.match(packageScript, /\$appFolderName = "BellwrightModLauncher"/);
   assert.match(packageScript, /\$zipPath = Join-Path \$releaseRoot "\$archiveName\.zip"/);
   assert.doesNotMatch(packageScript, /\$outDir = Join-Path \$distRoot \$archiveName/);
+});
+
+test("public launcher branding uses ExcelsiorOne", () => {
+  const retiredBrand = ["FSD", "Software"].join(" ");
+  assert.match(main, /maker: "ExcelsiorOne"/);
+  assert.match(renderer, /Support ExcelsiorOne/);
+  assert.match(index, /aria-label="ExcelsiorOne"/);
+  assert.match(license, /Copyright \(c\) 2026 ExcelsiorOne/);
+  assert.doesNotMatch([main, renderer, index, license].join("\n"), new RegExp(retiredBrand, "i"));
 });
 
 test("never scales the complete launcher to fit the mod count", () => {
