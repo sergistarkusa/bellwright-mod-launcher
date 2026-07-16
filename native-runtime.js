@@ -6,14 +6,28 @@ const childProcess = require("child_process");
 const MANIFEST_FILE = "native-runtime.json";
 const STAGED_PAYLOAD_NAME = "BellwrightNativePayload.dll";
 const STAGED_INJECTOR_NAME = "BellwrightNativeInjector.exe";
+const STAGED_CONFIG_NAME = "BellwrightNativeConfig.cfg";
+const MAX_CONFIG_BYTES = 4096;
+const GAME_HASH_PRE_HOTFIX = "5d77d16d59831f684dce32d513db9cdc671f6f78d5b67b44f4e8d7b8f816b3e1";
+const GAME_HASH_HOTFIX_2026_07_16 = "a3adc853e56e8a707348027db70ec923909df5a06ab342b8de5f71fca4ea4251";
 
 const TRUSTED_NATIVE_MODS = new Map([
   [
     "fsd.settlement-immigration",
     {
       publisher: "FSD Software",
-      payloadHashes: new Set(["4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487"]),
-      gameHashes: new Set(["5d77d16d59831f684dce32d513db9cdc671f6f78d5b67b44f4e8d7b8f816b3e1"])
+      payloadHashes: new Set([
+        "4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487",
+        "059d0fc24713d668a014a0233780d53c74aec8ceb55107ac4ecd7d0c4a8ce223",
+        "d73fb57dd1ccbfc0b786a6666f4019aa9e315d84e1e10754b32d5a442c735403",
+        "456b2347f094a04cc34715dcd3169a6cebd21759cc8563aa94070333d5d26626"
+      ]),
+      gameHashesByPayload: new Map([
+        ["4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487", new Set([GAME_HASH_PRE_HOTFIX])],
+        ["059d0fc24713d668a014a0233780d53c74aec8ceb55107ac4ecd7d0c4a8ce223", new Set([GAME_HASH_PRE_HOTFIX])],
+        ["d73fb57dd1ccbfc0b786a6666f4019aa9e315d84e1e10754b32d5a442c735403", new Set([GAME_HASH_PRE_HOTFIX])],
+        ["456b2347f094a04cc34715dcd3169a6cebd21759cc8563aa94070333d5d26626", new Set([GAME_HASH_HOTFIX_2026_07_16])]
+      ])
     }
   ]
 ]);
@@ -54,6 +68,13 @@ function normalizeHash(value) {
   return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value.trim()) ? value.trim().toLowerCase() : null;
 }
 
+function getSupportedGameHashes(trusted, payloadHash) {
+  if (trusted?.gameHashesByPayload instanceof Map) {
+    return trusted.gameHashesByPayload.get(payloadHash) || new Set();
+  }
+  return trusted?.gameHashes || new Set();
+}
+
 function normalizeManifest(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return null;
@@ -66,6 +87,7 @@ function normalizeManifest(raw) {
     version: typeof raw.version === "string" ? raw.version.trim() : "",
     payload: typeof raw.payload === "string" ? raw.payload.trim() : "",
     payloadSha256: normalizeHash(raw.payloadSha256),
+    config: typeof raw.config === "string" ? raw.config.trim() : "",
     loadStage: raw.loadStage === "main-menu" ? "main-menu" : "",
     healthLog: typeof raw.healthLog === "string" ? raw.healthLog.trim() : ""
   };
@@ -76,6 +98,8 @@ class NativeRuntimeManager {
     this.userDataPath = options.userDataPath;
     this.bundledInjectorPath = options.bundledInjectorPath;
     this.gameLogPath = options.gameLogPath;
+    this.resolveGameExecutablePath = options.resolveGameExecutablePath || (async () => null);
+    this.trustedNativeMods = options.trustedNativeMods || TRUSTED_NATIVE_MODS;
     this.onStatusChanged = options.onStatusChanged || (() => {});
     this.hashCache = new Map();
     this.sessionPid = null;
@@ -117,7 +141,7 @@ class NativeRuntimeManager {
     return hash;
   }
 
-  async inspectMod(folderPath, active) {
+  async inspectMod(folderPath, active, gameExecutablePath = null) {
     const manifestPath = path.join(folderPath, MANIFEST_FILE);
     if (!(await exists(manifestPath))) {
       return null;
@@ -138,7 +162,7 @@ class NativeRuntimeManager {
       };
     }
 
-    const trusted = TRUSTED_NATIVE_MODS.get(manifest.id);
+    const trusted = this.trustedNativeMods.get(manifest.id);
     if (!trusted || trusted.publisher !== manifest.publisher) {
       return { ...manifest, phase: "untrusted", label: "Untrusted", message: "Publisher is not trusted by this launcher" };
     }
@@ -148,13 +172,47 @@ class NativeRuntimeManager {
       return { ...manifest, phase: "blocked", label: "Blocked", message: "Payload signature does not match" };
     }
 
+    let configPath = null;
+    let configHash = null;
+    if (manifest.config) {
+      configPath = resolveInside(folderPath, manifest.config);
+      if (!configPath || !(await exists(configPath))) {
+        return { ...manifest, phase: "missing", label: "Config missing", message: "The native runtime config file was not found" };
+      }
+      const configStat = await fs.stat(configPath);
+      if (!configStat.isFile() || configStat.size > MAX_CONFIG_BYTES) {
+        return { ...manifest, phase: "invalid", label: "Invalid config", message: "The native runtime config file is invalid" };
+      }
+      configHash = await this.hashFile(configPath);
+    }
+
+    const installedGameExecutablePath = active ? gameExecutablePath || await this.resolveGameExecutablePath() : null;
+    if (installedGameExecutablePath && (await exists(installedGameExecutablePath))) {
+      const gameHash = await this.hashFile(installedGameExecutablePath);
+      const supportedGameHashes = getSupportedGameHashes(trusted, actualHash);
+      if (!supportedGameHashes.has(gameHash)) {
+        return {
+          ...manifest,
+          phase: "incompatible",
+          label: "Update required",
+          message: "Update required: this native runtime does not support the installed Bellwright build",
+          payloadPath,
+          actualHash,
+          configPath,
+          configHash
+        };
+      }
+    }
+
     return {
       ...manifest,
       phase: active ? "ready" : "disabled",
       label: active ? "Runtime ready" : "Runtime disabled",
       message: active ? "Trusted payload is ready to load" : "Enable the mod to load its runtime",
       payloadPath,
-      actualHash
+      actualHash,
+      configPath,
+      configHash
     };
   }
 
@@ -162,7 +220,7 @@ class NativeRuntimeManager {
     if (!inspection) {
       return null;
     }
-    const { payloadPath, actualHash, ...publicFields } = inspection;
+    const { payloadPath, actualHash, configPath, configHash, ...publicFields } = inspection;
     return publicFields;
   }
 
@@ -232,10 +290,19 @@ class NativeRuntimeManager {
     await fs.mkdir(stageRoot, { recursive: true });
     const stagedPayload = path.join(stageRoot, STAGED_PAYLOAD_NAME);
     const stagedInjector = path.join(stageRoot, STAGED_INJECTOR_NAME);
+    const stagedConfig = path.join(stageRoot, STAGED_CONFIG_NAME);
     await fs.copyFile(inspection.payloadPath, stagedPayload);
     await fs.copyFile(this.bundledInjectorPath, stagedInjector);
     if ((await this.hashFile(stagedPayload)) !== inspection.actualHash) {
       throw new Error("Staged payload failed integrity verification");
+    }
+    if (inspection.configPath) {
+      await fs.copyFile(inspection.configPath, stagedConfig);
+      if ((await this.hashFile(stagedConfig)) !== inspection.configHash) {
+        throw new Error("Staged native config failed integrity verification");
+      }
+    } else {
+      await fs.rm(stagedConfig, { force: true });
     }
     await this.runInjector(stagedInjector);
   }
@@ -258,7 +325,7 @@ class NativeRuntimeManager {
 
     const inspections = [];
     for (const folderPath of activeModFolders) {
-      const inspection = await this.inspectMod(folderPath, true);
+      const inspection = await this.inspectMod(folderPath, true, gameProcess.path);
       if (inspection) {
         inspections.push(inspection);
       }
@@ -281,9 +348,10 @@ class NativeRuntimeManager {
 
     const blocked = inspections.find((item) => item.phase !== "ready");
     if (blocked) {
+      const incompatible = blocked.phase === "incompatible";
       this.setStatus({
-        phase: "blocked",
-        label: "Blocked",
+        phase: incompatible ? "incompatible" : "blocked",
+        label: incompatible ? blocked.label : "Blocked",
         message: `${blocked.displayName || blocked.id || "Native mod"}: ${blocked.message}`,
         loaded: this.injectedIds.size,
         total: inspections.length,
@@ -317,8 +385,9 @@ class NativeRuntimeManager {
 
     const gameHash = await this.hashFile(gameProcess.path);
     for (const inspection of inspections) {
-      const trusted = TRUSTED_NATIVE_MODS.get(inspection.id);
-      if (!trusted.gameHashes.has(gameHash)) {
+      const trusted = this.trustedNativeMods.get(inspection.id);
+      const supportedGameHashes = getSupportedGameHashes(trusted, inspection.actualHash);
+      if (!supportedGameHashes.has(gameHash)) {
         this.setStatus({
           phase: "incompatible",
           label: "Update required",

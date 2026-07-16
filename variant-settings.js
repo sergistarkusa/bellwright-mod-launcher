@@ -25,7 +25,7 @@ function assertSafeRelativeDirectory(value) {
 
 function assertSafeFileName(value) {
   const file = String(value || "");
-  if (!file || path.basename(file) !== file || !/\.(pak|sig|ucas|utoc)$/i.test(file)) {
+  if (!file || path.basename(file) !== file || !/\.(pak|sig|ucas|utoc|cfg)$/i.test(file)) {
     throw new Error("A launcher setting contains an unsafe package file name.");
   }
   return file;

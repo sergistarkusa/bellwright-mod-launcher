@@ -68,6 +68,23 @@ test("rejects traversal and package types outside the allowlist", () => {
   }), /unsafe package file name/);
 });
 
+test("accepts a bounded native runtime config variant", () => {
+  const manifest = normalizeManifest({
+    schemaVersion: 1,
+    groups: [{
+      id: "frequency",
+      defaultOption: "standard",
+      files: ["SettlementImmigration.cfg"],
+      options: [{
+        id: "standard",
+        directory: "launcher-variants/standard",
+        hashes: { "SettlementImmigration.cfg": hash("profile=4\n") }
+      }]
+    }]
+  });
+  assert.deepEqual(manifest.groups[0].files, ["SettlementImmigration.cfg"]);
+});
+
 test("does not replace the live package when a variant hash is damaged", async (t) => {
   const { root, file } = await fixture();
   t.after(() => fs.rm(root, { recursive: true, force: true }));

@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.5] - 2026-07-16
+
+- Added launcher-controlled configuration files for trusted native mods without changing their verified payload.
+- Added ten exact Settlement Immigration presets: 1 through 10 newcomers per in-game day.
+- Give every scheduled newcomer a separate random arrival time between 07:00 and 22:59.
+- Added trust and compatibility support for Bellwright Steam build 24204729.
+- Check the installed Bellwright executable before launch and show native-mod incompatibility on the affected card instead of claiming the payload is ready.
+- Verify and stage native configuration beside the trusted payload before injection.
+- Added regression coverage for native runtime config variants and pre-launch compatibility reporting.
+
 ## [0.5.4] - 2026-07-15
 
 - Fixed native mods silently failing when the launcher window was closed before Bellwright reached the main menu.

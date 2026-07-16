@@ -21,7 +21,7 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 - Load trusted native runtime mods automatically after Bellwright reaches the main menu, even if the launcher window is closed while the game starts.
 - Block modified, unknown, or game-incompatible native payloads before execution.
 - Save and load named active-mod presets, including load order.
-- Configure compatible asset-only mods from a launcher-provided settings menu, with no script extender required.
+- Configure compatible asset and trusted native mods from a launcher-provided settings menu, with no script extender required.
 - Preserve selected mod options in named and shared presets and restore them after Workshop updates.
 - Share presets as compact `BWL1` codes and preview imported mod availability before saving.
 - Change active mod load priority through Bellwright's `modloadorder.json`.
@@ -38,7 +38,7 @@ Unzip it anywhere and run `BellwrightModLauncher.exe`.
 
 **Upgrading from v0.5.2 or older:** close the old launcher, download v0.5.3 or newer manually, extract it, and run the new executable once. Older builds may download an update successfully but lose the installer when Electron exits. Automatic updates use the repaired post-exit handoff from v0.5.3 onward.
 
-**Native mod users should install v0.5.4 or newer.** The launcher now remains active in the background until native runtime loading is complete and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
+**Native mod users should install v0.5.5 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 
@@ -56,7 +56,7 @@ Version 0.4.0 intentionally allows one active native mod at a time. A later shar
 
 Presets store the currently active local and Workshop mods by folder/source, load order, and compatible launcher settings. Loading a preset changes the active mod set, options, and priority order to match it, so Bellwright must be closed.
 
-Compatible asset-only mods can ship a schema-versioned `launcher-settings.json` plus signed package variants inside their own folder. Variant payloads use a non-mountable `.variant` suffix until selected. The launcher validates every declared path and SHA-256 hash, stages the complete replacement set, and rolls back if a swap fails. Settings are never changed while Bellwright is running. Before launch, saved choices are reapplied when a Workshop update has restored the default package.
+Compatible mods can ship a schema-versioned `launcher-settings.json` plus signed package or bounded `.cfg` variants inside their own folder. Variant payloads use a non-mountable `.variant` suffix until selected. The launcher validates every declared path and SHA-256 hash, stages the complete replacement set, and rolls back if a swap fails. Trusted native configs are copied beside the verified payload before injection. Settings are never changed while Bellwright is running. Before launch, saved choices are reapplied when a Workshop update has restored the default package.
 
 Conflict details are based on the asset metadata supplied by each mod's `modinfo.json`. They identify likely asset-level conflicts, but they cannot prove every possible gameplay or Blueprint logic conflict.
 

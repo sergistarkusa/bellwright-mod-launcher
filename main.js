@@ -285,6 +285,10 @@ app.whenReady().then(() => {
     userDataPath: app.getPath("userData"),
     bundledInjectorPath: path.join(__dirname, "runtime", "BellwrightNativeInjector.exe"),
     gameLogPath: path.join(getLocalAppDataPath(), "Bellwright", "Saved", "Logs", "Bellwright.log"),
+    resolveGameExecutablePath: async () => {
+      const { gameRoot } = await getInstallPaths();
+      return path.join(gameRoot, "Binaries", "Win64", "BellwrightGame-Win64-Shipping.exe");
+    },
     onStatusChanged: (status) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("mods:nativeRuntimeChanged", status);
