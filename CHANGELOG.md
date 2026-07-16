@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.8] - 2026-07-16
+
+- Reworked portable updates to replace files inside the stable installation folder instead of renaming the folder itself.
+- Added rollback from an external backup if in-place activation fails.
+- Versions through v0.5.7 may require one final manual installation because their older updater still uses whole-folder replacement.
+
 ## [0.5.7] - 2026-07-16
 
 - Changed the public author identity and launcher interface branding to ExcelsiorOne.

@@ -10,6 +10,7 @@ const main = fs.readFileSync(path.join(root, "main.js"), "utf8");
 const packageScript = fs.readFileSync(path.join(root, "scripts", "package-windows.ps1"), "utf8");
 const index = fs.readFileSync(path.join(root, "renderer", "index.html"), "utf8");
 const license = fs.readFileSync(path.join(root, "LICENSE"), "utf8");
+const updater = fs.readFileSync(path.join(root, "runtime", "apply-update.ps1"), "utf8");
 
 test("updater uses Node crypto instead of Electron's Web Crypto global", () => {
   assert.match(main, /const nodeCrypto = require\("node:crypto"\);/);
@@ -26,14 +27,20 @@ test("updater is relaunched after Electron exits instead of dying as its child",
 });
 
 test("updater leaves the installation directory before renaming it", () => {
-  const updater = main.match(/function getUpdaterScriptText\(\)[\s\S]*?\n}\n\nasync function writeUpdaterScript/)?.[0] || "";
   assert.match(updater, /Set-Location -LiteralPath \$updaterWorkingDir/);
   assert.match(updater, /Set-Location -LiteralPath \(\[System\.IO\.Path\]::GetTempPath\(\)\)/);
   assert.ok(
     updater.indexOf("Set-Location -LiteralPath $updaterWorkingDir")
-      < updater.indexOf("Rename-Item -LiteralPath $install"),
-    "the updater must release its inherited working-directory handle before replacing the install"
+      < updater.indexOf("Get-ChildItem -LiteralPath $install -Force"),
+    "the updater must release its inherited working-directory handle before touching the install"
   );
+});
+
+test("updater replaces contents without renaming the stable installation folder", () => {
+  assert.doesNotMatch(updater, /Rename-Item -LiteralPath \$install/);
+  assert.match(updater, /Clearing the current installation/);
+  assert.match(updater, /Copy-Item -Destination \$install -Recurse -Force/);
+  assert.match(updater, /Copy-Item -Destination \$backup -Recurse -Force/);
 });
 
 test("portable archive is versioned but its application folder is stable", () => {
