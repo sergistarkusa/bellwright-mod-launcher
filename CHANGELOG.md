@@ -5,6 +5,7 @@
 - Fixed Windows self-updates failing after download because the updater inherited the launcher's installation folder as its working directory.
 - The updater now moves to its staging folder before replacing the portable installation.
 - New portable archives keep the version in the ZIP filename while using the stable internal folder name `BellwrightModLauncher`.
+- Versions through v0.5.5 may require this one manual download because their old updater cannot install its own repair.
 
 ## [0.5.5] - 2026-07-16
 
