@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld("bellwrightMods", {
   launchGame: () => ipcRenderer.invoke("mods:launchGame"),
   openDonate: () => ipcRenderer.invoke("app:openDonate"),
   openDiscord: () => ipcRenderer.invoke("app:openDiscord"),
+  checkLauncherUpdate: () => ipcRenderer.invoke("app:checkLauncherUpdate"),
   updateLauncher: () => ipcRenderer.invoke("app:updateLauncher"),
   onUpdateProgress: (callback) => ipcRenderer.on("app:updateProgress", (_event, progress) => callback(progress))
 });

@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.10] - 2026-07-17
+
+- Show a small notification badge on the Update button after a background check confirms that a newer Windows release is available.
+- Retry removal when Windows temporarily locks an updater file with `EBUSY`, `EPERM`, `EACCES`, or `ENOTEMPTY`.
+- Schedule another background cleanup pass after a failed attempt instead of leaving a partially removed update session forever.
+- Never partially delete the update session containing the currently running launcher; a hidden detached cleanup helper removes that session after the process exits.
+- Keep both the updater and deferred cleanup PowerShell processes hidden.
+
 ## [0.5.9] - 2026-07-16
 
 - Remove downloaded ZIPs, extracted packages, updater scripts, logs, `.new-*` folders, and `.old-*` backups after a verified update.

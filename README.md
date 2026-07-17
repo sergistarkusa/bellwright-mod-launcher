@@ -26,7 +26,7 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 - Share presets as compact `BWL1` codes and preview imported mod availability before saving.
 - Change active mod load priority through Bellwright's `modloadorder.json`.
 - Show active mod conflicts from shared assets listed in `modinfo.json`.
-- Update the launcher from the latest GitHub Release with visible download progress.
+- Check quietly for a newer launcher release, show an Update notification badge, and install it with visible download progress.
 - Join the Bellwright Discord section from the app.
 - Support ExcelsiorOne through Ko-fi.
 
@@ -36,9 +36,11 @@ Use the latest Windows portable ZIP from the GitHub Releases page.
 
 Unzip it anywhere and run `BellwrightModLauncher.exe` from the stable `BellwrightModLauncher` folder. The downloaded ZIP filename contains the release version; the application folder does not.
 
-**Upgrading from v0.5.7 or older:** close the old launcher, download v0.5.9 or newer manually, extract the stable `BellwrightModLauncher` folder beside the old portable folder, and run its executable once. Older builds can download an update but may fail while replacing their own installation folder. The current launcher removes failed `.new-*`/`.old-*` folders and older adjacent versioned portable installations after the stable folder starts successfully.
+**Upgrading from v0.5.7 or older:** close the old launcher, download v0.5.10 or newer manually, extract the stable `BellwrightModLauncher` folder beside the old portable folder, and run its executable once. Older builds can download an update but may fail while replacing their own installation folder. The current launcher removes failed `.new-*`/`.old-*` folders and older adjacent versioned portable installations after the stable folder starts successfully.
 
-**Native mod users should install v0.5.9 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
+**Native mod users should install v0.5.10 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
+
+The updater does not depend on Microsoft Edge. It downloads the GitHub Release directly over HTTPS and uses hidden Windows PowerShell for ZIP extraction and in-place replacement. Cleanup retries temporary Windows file locks and schedules another background pass if a lock outlives the first attempt.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 

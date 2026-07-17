@@ -9,7 +9,12 @@ const zlib = require("zlib");
 const packageInfo = require("./package.json");
 const { NativeRuntimeManager } = require("./native-runtime");
 const { applyVariantOption, inspectVariantSettings, normalizeSelectionMap } = require("./variant-settings");
-const { cleanupUpdateArtifacts, removeUpdateSession } = require("./update-cleanup");
+const {
+  buildPostExitCleanupCommand,
+  cleanupUpdateArtifacts,
+  findContainingUpdateSession,
+  removeUpdateSession
+} = require("./update-cleanup");
 
 const GAME_APP_ID = "1812450";
 const DEFAULT_STEAM_ROOT = path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Steam");
@@ -288,7 +293,8 @@ async function cleanupStaleLauncherUpdates() {
   const removed = await cleanupUpdateArtifacts({
     userDataPath: app.getPath("userData"),
     installDir: getInstallDirectory(),
-    currentVersion: packageInfo.version
+    currentVersion: packageInfo.version,
+    currentExecutablePath: process.execPath
   });
   if (removed.length > 0) {
     console.log(`[launcher] removed ${removed.length} stale update artifact(s)`);
@@ -296,16 +302,69 @@ async function cleanupStaleLauncherUpdates() {
   return removed;
 }
 
-function scheduleStaleUpdateCleanup() {
-  const timer = setTimeout(() => {
+function scheduleActiveUpdateSessionCleanup() {
+  const activeSession = findContainingUpdateSession(app.getPath("userData"), process.execPath);
+  if (!activeSession) {
+    return false;
+  }
+
+  const windowsRoot = process.env.SystemRoot || "C:\\Windows";
+  const powershellPath = path.join(
+    windowsRoot,
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe"
+  );
+  if (!fsNative.existsSync(powershellPath)) {
+    console.error(`[launcher] cannot schedule post-exit cleanup because PowerShell is missing: ${powershellPath}`);
+    return false;
+  }
+
+  const cleanupCommand = buildPostExitCleanupCommand();
+  const cleanupProcess = childProcess.spawn(
+    powershellPath,
+    [
+      "-WindowStyle",
+      "Hidden",
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-Command",
+      cleanupCommand
+    ],
+    {
+      cwd: windowsRoot,
+      detached: true,
+      env: {
+        ...process.env,
+        BELLWRIGHT_CLEANUP_PROCESS_ID: String(process.pid),
+        BELLWRIGHT_CLEANUP_TARGET: activeSession
+      },
+      stdio: "ignore",
+      windowsHide: true
+    }
+  );
+  cleanupProcess.unref();
+  console.log(`[launcher] scheduled post-exit cleanup for active update session: ${activeSession}`);
+  return true;
+}
+
+function scheduleStaleUpdateCleanup(delayMs = 5000, retryAttempt = 0) {
+  const timer = setTimeout(async () => {
     if (updateInProgress) {
-      scheduleStaleUpdateCleanup();
+      scheduleStaleUpdateCleanup(5000, retryAttempt);
       return;
     }
-    cleanupStaleLauncherUpdates().catch((error) => {
+    try {
+      await cleanupStaleLauncherUpdates();
+    } catch (error) {
       console.error("[launcher] failed to remove stale update artifacts", error);
-    });
-  }, 5000);
+      const retryDelayMs = Math.min(60000, 5000 * (2 ** Math.min(retryAttempt, 4)));
+      scheduleStaleUpdateCleanup(retryDelayMs, retryAttempt + 1);
+    }
+  }, delayMs);
   timer.unref?.();
 }
 
@@ -326,6 +385,7 @@ app.whenReady().then(() => {
   });
   createWindow();
   startGameRunningWatcher();
+  scheduleActiveUpdateSessionCleanup();
   scheduleStaleUpdateCleanup();
 });
 
@@ -1943,6 +2003,31 @@ async function fetchLatestRelease() {
   return requestJson(`${GITHUB_API_BASE}/releases/latest`);
 }
 
+function describeLauncherRelease(release) {
+  const latestVersion = normalizeVersion(release.tag_name || release.name || "");
+  if (!latestVersion) {
+    throw new Error("Latest GitHub release does not have a version tag.");
+  }
+  return {
+    status: compareVersions(latestVersion, packageInfo.version) > 0 ? "available" : "up-to-date",
+    currentVersion: packageInfo.version,
+    latestVersion
+  };
+}
+
+async function checkLauncherUpdate() {
+  if (!app.isPackaged) {
+    return { status: "unsupported", currentVersion: packageInfo.version };
+  }
+
+  const release = await fetchLatestRelease();
+  const result = describeLauncherRelease(release);
+  if (result.status === "available" && !findUpdateAsset(release)?.browser_download_url) {
+    throw new Error(`Release v${result.latestVersion} does not include a Windows portable ZIP.`);
+  }
+  return result;
+}
+
 async function expandZip(zipPath, destinationPath) {
   await fs.rm(destinationPath, { recursive: true, force: true });
   await ensureDirectory(destinationPath);
@@ -2050,12 +2135,10 @@ async function updateLauncher() {
     await cleanupStaleLauncherUpdates();
     sendUpdateProgress({ phase: "check", percent: 0, message: "Checking GitHub release..." });
     const release = await fetchLatestRelease();
-    const latestVersion = normalizeVersion(release.tag_name || release.name || "");
-    if (!latestVersion) {
-      throw new Error("Latest GitHub release does not have a version tag.");
-    }
+    const releaseStatus = describeLauncherRelease(release);
+    const { latestVersion } = releaseStatus;
 
-    if (compareVersions(latestVersion, packageInfo.version) <= 0) {
+    if (releaseStatus.status === "up-to-date") {
       sendUpdateProgress({ phase: "done", percent: 100, message: "Launcher is up to date." });
       return { status: "up-to-date", currentVersion: packageInfo.version, latestVersion };
     }
@@ -2149,6 +2232,10 @@ ipcMain.on("window:close", (event) => {
 });
 
 ipcMain.handle("app:getInfo", getAppInfo);
+
+ipcMain.handle("app:checkLauncherUpdate", async () => {
+  return checkLauncherUpdate();
+});
 
 ipcMain.handle("presets:list", async () => {
   return listPresets();

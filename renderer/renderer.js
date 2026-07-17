@@ -26,6 +26,7 @@ const deletePresetButton = document.querySelector("#deletePresetButton");
 const aboutMaker = document.querySelector("#aboutMaker");
 const appVersion = document.querySelector("#appVersion");
 const updateButton = document.querySelector("#updateButton");
+const updateAvailabilityBadge = document.querySelector("#updateAvailabilityBadge");
 const donateButton = document.querySelector("#donateButton");
 const discordButton = document.querySelector("#discordButton");
 const updateProgress = document.querySelector("#updateProgress");
@@ -71,6 +72,8 @@ let pendingGameRunningState = null;
 let gameStateRefreshRunning = false;
 let inspectedShareCode = null;
 let settingsModalMod = null;
+let launcherUpdateSupported = false;
+let launcherUpdateRepo = "GitHub";
 
 const icons = {
   power: '<svg viewBox="0 0 24 24"><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" /></svg>',
@@ -372,6 +375,40 @@ function handleNativeRuntimeChanged(runtime) {
   renderNativeRuntime(runtime);
 }
 
+function renderLauncherUpdateAvailability(result = null) {
+  const updateAvailable = launcherUpdateSupported && result?.status === "available";
+  const latestVersion = updateAvailable ? String(result.latestVersion || "").trim() : "";
+  updateButton.classList.toggle("updateAvailable", updateAvailable);
+  updateAvailabilityBadge.hidden = !updateAvailable;
+
+  if (updateAvailable) {
+    const versionLabel = latestVersion ? ` v${latestVersion}` : "";
+    updateButton.title = `Update${versionLabel} is available - click to install`;
+    updateButton.setAttribute("aria-label", `Launcher update${versionLabel} is available`);
+  } else if (launcherUpdateSupported) {
+    updateButton.title = `Check for updates from ${launcherUpdateRepo}`;
+    updateButton.setAttribute("aria-label", "Check for launcher updates");
+  } else {
+    updateButton.title = "Updates are applied from the packaged launcher";
+    updateButton.setAttribute("aria-label", "Launcher updates require the packaged application");
+  }
+}
+
+async function checkLauncherUpdateAvailability() {
+  if (!launcherUpdateSupported) {
+    renderLauncherUpdateAvailability();
+    return;
+  }
+
+  try {
+    const result = await window.bellwrightMods.checkLauncherUpdate();
+    renderLauncherUpdateAvailability(result);
+  } catch {
+    // A background network failure means the update state is unknown, not available.
+    renderLauncherUpdateAvailability();
+  }
+}
+
 async function loadAppInfo() {
   try {
     const appInfo = await window.bellwrightMods.getAppInfo();
@@ -381,9 +418,10 @@ async function loadAppInfo() {
     donateButton.title = appInfo.donateUrl ? "Support ExcelsiorOne" : "Ko-fi link is not configured";
     discordButton.disabled = !appInfo.discordUrl;
     discordButton.title = appInfo.discordUrl ? "Join the Bellwright Discord section" : "Discord link is not configured";
-    updateButton.title = appInfo.updateSupported
-      ? `Update from ${appInfo.updateRepo || "GitHub"}`
-      : "Updates are applied from the packaged launcher";
+    launcherUpdateSupported = Boolean(appInfo.updateSupported);
+    launcherUpdateRepo = appInfo.updateRepo || "GitHub";
+    renderLauncherUpdateAvailability();
+    void checkLauncherUpdateAvailability();
   } catch (error) {
     showToast(error.message || String(error), true);
   }
@@ -1146,6 +1184,7 @@ async function updateLauncher() {
     showUpdateProgress({ phase: "check", percent: 0, message: "Checking GitHub release..." });
     const result = await window.bellwrightMods.updateLauncher();
     if (result.status === "up-to-date") {
+      renderLauncherUpdateAvailability(result);
       showToast("Launcher is up to date.");
       hideUpdateProgressSoon();
     } else if (result.status === "cancelled") {

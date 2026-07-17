@@ -373,10 +373,34 @@ p {
 }
 
 .updateButton {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 0 8px;
+}
+
+.updateAvailabilityBadge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  display: grid;
+  place-items: center;
+  width: 15px;
+  height: 15px;
+  border: 2px solid #141716;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.48);
+  color: #17130a;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  pointer-events: none;
+}
+
+.updateAvailabilityBadge[hidden] {
+  display: none;
 }
 
 .donateButton:hover:not(:disabled) {

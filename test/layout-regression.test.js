@@ -11,6 +11,8 @@ const packageScript = fs.readFileSync(path.join(root, "scripts", "package-window
 const index = fs.readFileSync(path.join(root, "renderer", "index.html"), "utf8");
 const license = fs.readFileSync(path.join(root, "LICENSE"), "utf8");
 const updater = fs.readFileSync(path.join(root, "runtime", "apply-update.ps1"), "utf8");
+const updateCleanup = fs.readFileSync(path.join(root, "update-cleanup.js"), "utf8");
+const preload = fs.readFileSync(path.join(root, "preload.js"), "utf8");
 
 test("updater uses Node crypto instead of Electron's Web Crypto global", () => {
   assert.match(main, /const nodeCrypto = require\("node:crypto"\);/);
@@ -50,7 +52,16 @@ test("successful updates verify restart and remove every disposable artifact", (
   assert.match(updater, /Remove-DirectoryWithRetry \$update "Removing downloaded update files"/);
   assert.match(updater, /Remove-DirectoryWithRetry \$backup "Removing previous launcher version"/);
   assert.match(main, /cleanupStaleLauncherUpdates/);
-  assert.match(main, /if \(updateInProgress\) \{\s*scheduleStaleUpdateCleanup\(\)/s);
+  assert.match(main, /currentExecutablePath: process\.execPath/);
+  assert.match(main, /if \(updateInProgress\) \{\s*scheduleStaleUpdateCleanup\(5000, retryAttempt\)/s);
+  assert.match(main, /scheduleStaleUpdateCleanup\(retryDelayMs, retryAttempt \+ 1\)/);
+  assert.match(updateCleanup, /maxRetries: 8/);
+  assert.match(updateCleanup, /RETRYABLE_REMOVAL_CODES/);
+  assert.match(main, /function scheduleActiveUpdateSessionCleanup\(\)/);
+  assert.match(updateCleanup, /Wait-Process -Id \$launcherProcessId/);
+  const deferredCleanup = main.match(/function scheduleActiveUpdateSessionCleanup[\s\S]*?\n}\n\nfunction scheduleStaleUpdateCleanup/)?.[0] || "";
+  assert.match(deferredCleanup, /"-WindowStyle",\s*"Hidden"/s);
+  assert.match(deferredCleanup, /windowsHide: true/);
   assert.match(packageScript, /update-cleanup\.js/);
 });
 
@@ -76,6 +87,18 @@ test("public launcher branding uses ExcelsiorOne", () => {
   assert.match(index, /aria-label="ExcelsiorOne"/);
   assert.match(license, /Copyright \(c\) 2026 ExcelsiorOne/);
   assert.doesNotMatch([main, renderer, index, license].join("\n"), new RegExp(retiredBrand, "i"));
+});
+
+test("update badge appears only after a confirmed background release check", () => {
+  assert.match(index, /id="updateAvailabilityBadge"[^>]*aria-hidden="true"[^>]*hidden/);
+  assert.match(styles, /\.updateAvailabilityBadge\s*\{[^}]*position:\s*absolute[^}]*border-radius:\s*50%/s);
+  assert.match(styles, /\.updateAvailabilityBadge\[hidden\]\s*\{[^}]*display:\s*none/s);
+  assert.match(preload, /checkLauncherUpdate:\s*\(\)\s*=>\s*ipcRenderer\.invoke\("app:checkLauncherUpdate"\)/);
+  assert.match(main, /async function checkLauncherUpdate\(\)[\s\S]*?status:\s*"unsupported"[\s\S]*?fetchLatestRelease\(\)/);
+  assert.match(main, /result\.status === "available" && !findUpdateAsset\(release\)\?\.browser_download_url/);
+  assert.match(renderer, /result\?\.status === "available"/);
+  assert.match(renderer, /void checkLauncherUpdateAvailability\(\)/);
+  assert.match(renderer, /background network failure means the update state is unknown, not available/);
 });
 
 test("never scales the complete launcher to fit the mod count", () => {
