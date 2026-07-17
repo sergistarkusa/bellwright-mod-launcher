@@ -28,6 +28,7 @@ async function measure(window, scenario) {
     const available = document.querySelector('#availableList');
     const card = active.querySelector('.modCard');
     const title = card.querySelector('.modTitle h2');
+    const updateBadge = document.querySelector('.updateAvailabilityBadge');
     active.scrollTop = Math.min(300, active.scrollHeight);
     return {
       innerWidth,
@@ -50,7 +51,10 @@ async function measure(window, scenario) {
       activeClientHeight: active.clientHeight,
       activeScrollHeight: active.scrollHeight,
       activeScrollTop: active.scrollTop,
-      availableScrollTop: available.scrollTop
+      availableScrollTop: available.scrollTop,
+      updateBadgeDisplay: getComputedStyle(updateBadge).display,
+      updateBadgeWidth: updateBadge.getBoundingClientRect().width,
+      updateBadgeHeight: updateBadge.getBoundingClientRect().height
     };
   })()`);
 }
@@ -73,6 +77,9 @@ app.whenReady().then(async () => {
       assert.ok(metrics.titleHeight <= 17, `mod title wrapped to another line: ${metrics.titleHeight}px`);
       assert.ok(metrics.cardScrollWidth <= metrics.cardClientWidth + 1, "card controls overflow horizontally");
       assert.ok(metrics.controlsScrollWidth <= metrics.controlsClientWidth + 1, "static controls overflow horizontally");
+      assert.notEqual(metrics.updateBadgeDisplay, "none", "update-available badge is hidden");
+      assert.ok(metrics.updateBadgeWidth >= 14 && metrics.updateBadgeWidth <= 20, `unexpected update badge width: ${metrics.updateBadgeWidth}px`);
+      assert.ok(metrics.updateBadgeHeight >= 14 && metrics.updateBadgeHeight <= 20, `unexpected update badge height: ${metrics.updateBadgeHeight}px`);
       assert.ok(metrics.boardHeight >= 120, `board became unusably short: ${metrics.boardHeight}px`);
       assert.ok(metrics.topbarHeight >= 78, `top bar collapsed: ${metrics.topbarHeight}px`);
       assert.ok(metrics.statusHeight >= 42, `status strip collapsed: ${metrics.statusHeight}px`);

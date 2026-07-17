@@ -3,6 +3,9 @@ const path = require("node:path");
 
 const UPDATE_ARTIFACT_SUFFIX = /\.(?:new|old)-\d{17}$/i;
 const VERSIONED_PORTABLE_FOLDER = /^BellwrightModLauncher-v(\d+\.\d+\.\d+)-win-x64-portable$/i;
+const RETRYABLE_REMOVAL_CODES = new Set(["EACCES", "EBUSY", "ENOTEMPTY", "EPERM"]);
+const REMOVE_ATTEMPTS = 4;
+const REMOVE_RETRY_DELAY_MS = 250;
 
 function normalizeVersion(version) {
   return String(version || "").trim().replace(/^v/i, "");
@@ -29,6 +32,75 @@ async function exists(filePath) {
   } catch {
     return false;
   }
+}
+
+function wait(delayMs) {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
+async function removeTreeWithRetry(
+  targetPath,
+  {
+    rm = fs.rm.bind(fs),
+    waitForRetry = wait,
+    attempts = REMOVE_ATTEMPTS,
+    retryDelayMs = REMOVE_RETRY_DELAY_MS
+  } = {}
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await rm(targetPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 8,
+        retryDelay: retryDelayMs
+      });
+      return;
+    } catch (error) {
+      if (!RETRYABLE_REMOVAL_CODES.has(error?.code) || attempt === attempts) {
+        throw error;
+      }
+      await waitForRetry(retryDelayMs * attempt);
+    }
+  }
+}
+
+function findContainingUpdateSession(userDataPath, executablePath) {
+  if (!userDataPath || !executablePath) {
+    return null;
+  }
+  const updatesRoot = path.join(path.resolve(userDataPath), "updates");
+  const relative = path.relative(updatesRoot, path.resolve(executablePath));
+  if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    return null;
+  }
+  const [sessionName] = relative.split(path.sep);
+  return sessionName ? path.join(updatesRoot, sessionName) : null;
+}
+
+function buildPostExitCleanupCommand() {
+  return [
+    "& {",
+    "$launcherProcessId = [int]$env:BELLWRIGHT_CLEANUP_PROCESS_ID",
+    "$target = [string]$env:BELLWRIGHT_CLEANUP_TARGET",
+    "if ($launcherProcessId -le 0 -or [string]::IsNullOrWhiteSpace($target)) { exit 2 }",
+    "Wait-Process -Id $launcherProcessId -ErrorAction SilentlyContinue",
+    "for ($attempt = 1; $attempt -le 80; $attempt++) {",
+    "try {",
+    "if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction Stop }",
+    "if (-not (Test-Path -LiteralPath $target)) {",
+    "$parent = Split-Path -Parent $target",
+    "if ((Test-Path -LiteralPath $parent) -and @(Get-ChildItem -LiteralPath $parent -Force).Count -eq 0) {",
+    "Remove-Item -LiteralPath $parent -Force -ErrorAction Stop",
+    "}",
+    "exit 0",
+    "}",
+    "} catch {}",
+    "Start-Sleep -Milliseconds 250",
+    "}",
+    "exit 1",
+    "}"
+  ].join("\n");
 }
 
 async function readPackagedVersion(folderPath) {
@@ -58,7 +130,7 @@ async function removeUpdateSession(updateRoot) {
   }
   const sessionRoot = path.resolve(updateRoot);
   const updatesRoot = path.dirname(sessionRoot);
-  await fs.rm(sessionRoot, { recursive: true, force: true });
+  await removeTreeWithRetry(sessionRoot);
   try {
     const remaining = await fs.readdir(updatesRoot);
     if (remaining.length === 0) {
@@ -69,12 +141,29 @@ async function removeUpdateSession(updateRoot) {
   }
 }
 
-async function cleanupUpdateArtifacts({ userDataPath, installDir, currentVersion }) {
+async function cleanupUpdateArtifacts({ userDataPath, installDir, currentVersion, currentExecutablePath = "" }) {
   const removed = [];
   const updatesRoot = path.join(path.resolve(userDataPath), "updates");
+  const activeUpdateSession = findContainingUpdateSession(userDataPath, currentExecutablePath);
   if (await exists(updatesRoot)) {
-    await fs.rm(updatesRoot, { recursive: true, force: true });
-    removed.push(updatesRoot);
+    const updateEntries = await fs.readdir(updatesRoot, { withFileTypes: true });
+    for (const entry of updateEntries) {
+      const candidate = path.join(updatesRoot, entry.name);
+      if (activeUpdateSession && path.resolve(candidate) === path.resolve(activeUpdateSession)) {
+        continue;
+      }
+      await removeTreeWithRetry(candidate);
+      removed.push(candidate);
+    }
+    try {
+      const remaining = await fs.readdir(updatesRoot);
+      if (remaining.length === 0) {
+        await fs.rmdir(updatesRoot);
+        removed.push(updatesRoot);
+      }
+    } catch {
+      // Another process may have finished cleanup or created a new update session.
+    }
   }
 
   const resolvedInstall = path.resolve(installDir);
@@ -108,7 +197,7 @@ async function cleanupUpdateArtifacts({ userDataPath, installDir, currentVersion
     }
 
     if (shouldRemove) {
-      await fs.rm(candidate, { recursive: true, force: true });
+      await removeTreeWithRetry(candidate);
       removed.push(candidate);
     }
   }
@@ -116,8 +205,11 @@ async function cleanupUpdateArtifacts({ userDataPath, installDir, currentVersion
 }
 
 module.exports = {
+  buildPostExitCleanupCommand,
   cleanupUpdateArtifacts,
   compareVersions,
+  findContainingUpdateSession,
   isKnownUpdateArtifact,
+  removeTreeWithRetry,
   removeUpdateSession
 };
