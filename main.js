@@ -9,6 +9,7 @@ const zlib = require("zlib");
 const packageInfo = require("./package.json");
 const { NativeRuntimeManager } = require("./native-runtime");
 const { applyVariantOption, inspectVariantSettings, normalizeSelectionMap } = require("./variant-settings");
+const { cleanupUpdateArtifacts, removeUpdateSession } = require("./update-cleanup");
 
 const GAME_APP_ID = "1812450";
 const DEFAULT_STEAM_ROOT = path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Steam");
@@ -280,6 +281,34 @@ function startGameRunningWatcher() {
   gameRunningPollTimer = setInterval(pollGameRunning, 2000);
 }
 
+async function cleanupStaleLauncherUpdates() {
+  if (!app.isPackaged) {
+    return [];
+  }
+  const removed = await cleanupUpdateArtifacts({
+    userDataPath: app.getPath("userData"),
+    installDir: getInstallDirectory(),
+    currentVersion: packageInfo.version
+  });
+  if (removed.length > 0) {
+    console.log(`[launcher] removed ${removed.length} stale update artifact(s)`);
+  }
+  return removed;
+}
+
+function scheduleStaleUpdateCleanup() {
+  const timer = setTimeout(() => {
+    if (updateInProgress) {
+      scheduleStaleUpdateCleanup();
+      return;
+    }
+    cleanupStaleLauncherUpdates().catch((error) => {
+      console.error("[launcher] failed to remove stale update artifacts", error);
+    });
+  }, 5000);
+  timer.unref?.();
+}
+
 app.whenReady().then(() => {
   nativeRuntimeManager = new NativeRuntimeManager({
     userDataPath: app.getPath("userData"),
@@ -297,6 +326,7 @@ app.whenReady().then(() => {
   });
   createWindow();
   startGameRunningWatcher();
+  scheduleStaleUpdateCleanup();
 });
 
 app.on("before-quit", () => {
@@ -1878,6 +1908,29 @@ function downloadFile(url, targetPath, onProgress) {
   });
 }
 
+function sha256File(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = nodeCrypto.createHash("sha256");
+    const stream = fsNative.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+async function verifyDownloadedAsset(asset, zipPath) {
+  const digest = String(asset?.digest || "").trim().toLowerCase();
+  if (!digest.startsWith("sha256:") || digest.length !== 71) {
+    throw new Error("GitHub release asset does not include a valid SHA-256 digest.");
+  }
+  const expected = digest.slice("sha256:".length);
+  const actual = await sha256File(zipPath);
+  if (actual.toLowerCase() !== expected) {
+    throw new Error(`Downloaded update failed SHA-256 verification. Expected ${expected}, got ${actual}.`);
+  }
+  return actual;
+}
+
 function findUpdateAsset(release) {
   const assets = Array.isArray(release.assets) ? release.assets : [];
   return (
@@ -1934,7 +1987,7 @@ async function writeUpdaterScript(updateRoot) {
   return scriptPath;
 }
 
-async function startUpdaterAndQuit(stagedAppRoot, updateRoot) {
+async function startUpdaterAndQuit(stagedAppRoot, updateRoot, expectedVersion) {
   const installDir = getInstallDirectory();
   const scriptPath = await writeUpdaterScript(updateRoot);
   const logPath = path.join(updateRoot, "apply-update.log");
@@ -1957,6 +2010,8 @@ async function startUpdaterAndQuit(stagedAppRoot, updateRoot) {
   app.relaunch({
     execPath: powershellPath,
     args: [
+      "-WindowStyle",
+      "Hidden",
       "-NoProfile",
       "-ExecutionPolicy",
       "Bypass",
@@ -1966,8 +2021,14 @@ async function startUpdaterAndQuit(stagedAppRoot, updateRoot) {
       installDir,
       "-StagedAppDir",
       stagedAppRoot,
+      "-UpdateRoot",
+      updateRoot,
       "-ExeName",
       UPDATE_EXE_NAME,
+      "-ExpectedVersion",
+      expectedVersion,
+      "-UserDataDir",
+      app.getPath("userData"),
       "-ProcessId",
       String(process.pid),
       "-LogPath",
@@ -1982,8 +2043,11 @@ async function updateLauncher() {
     throw new Error("An update is already in progress.");
   }
   updateInProgress = true;
+  let updateRoot = null;
+  let handoffStarted = false;
 
   try {
+    await cleanupStaleLauncherUpdates();
     sendUpdateProgress({ phase: "check", percent: 0, message: "Checking GitHub release..." });
     const release = await fetchLatestRelease();
     const latestVersion = normalizeVersion(release.tag_name || release.name || "");
@@ -2006,13 +2070,16 @@ async function updateLauncher() {
     }
 
     const updateSession = `${latestVersion}-${Date.now()}-${nodeCrypto.randomBytes(4).toString("hex")}`;
-    const updateRoot = path.join(app.getPath("userData"), "updates", updateSession);
+    updateRoot = path.join(app.getPath("userData"), "updates", updateSession);
     const zipPath = path.join(updateRoot, asset.name || `BellwrightModLauncher-v${latestVersion}.zip`);
     const extractedRoot = path.join(updateRoot, "extracted");
     await ensureDirectory(updateRoot);
 
     sendUpdateProgress({ phase: "download", percent: 0, message: `Downloading v${latestVersion}...` });
     await downloadFile(asset.browser_download_url, zipPath, sendUpdateProgress);
+
+    sendUpdateProgress({ phase: "verify", percent: 100, message: "Verifying downloaded update..." });
+    await verifyDownloadedAsset(asset, zipPath);
 
     sendUpdateProgress({ phase: "extract", percent: 100, message: "Preparing update..." });
     await expandZip(zipPath, extractedRoot);
@@ -2030,11 +2097,19 @@ async function updateLauncher() {
     });
 
     if (choice.response === 0) {
-      await startUpdaterAndQuit(stagedAppRoot, updateRoot);
+      await startUpdaterAndQuit(stagedAppRoot, updateRoot, latestVersion);
+      handoffStarted = true;
       return { status: "restarting", latestVersion };
     }
 
-    return { status: "staged", latestVersion };
+    await removeUpdateSession(updateRoot);
+    updateRoot = null;
+    return { status: "cancelled", latestVersion };
+  } catch (error) {
+    if (updateRoot && !handoffStarted) {
+      await removeUpdateSession(updateRoot).catch(() => {});
+    }
+    throw error;
   } finally {
     updateInProgress = false;
   }

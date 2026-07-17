@@ -26,21 +26,40 @@ test("updater is relaunched after Electron exits instead of dying as its child",
   assert.doesNotMatch(handoff, /childProcess\.spawn/);
 });
 
-test("updater leaves the installation directory before renaming it", () => {
-  assert.match(updater, /Set-Location -LiteralPath \$updaterWorkingDir/);
+test("updater leaves the installation and staging directories before cleanup", () => {
+  assert.match(updater, /Set-Location -LiteralPath \$update/);
   assert.match(updater, /Set-Location -LiteralPath \(\[System\.IO\.Path\]::GetTempPath\(\)\)/);
-  assert.ok(
-    updater.indexOf("Set-Location -LiteralPath $updaterWorkingDir")
-      < updater.indexOf("Get-ChildItem -LiteralPath $install -Force"),
-    "the updater must release its inherited working-directory handle before touching the install"
-  );
+  const successCleanup = updater.match(/Remove-DirectoryWithRetry \$replacement[\s\S]*?Remove-DirectoryWithRetry \$update/)?.[0] || "";
+  assert.match(successCleanup, /Set-Location -LiteralPath \(\[System\.IO\.Path\]::GetTempPath\(\)\)/);
 });
 
 test("updater replaces contents without renaming the stable installation folder", () => {
   assert.doesNotMatch(updater, /Rename-Item -LiteralPath \$install/);
   assert.match(updater, /Clearing the current installation/);
-  assert.match(updater, /Copy-Item -Destination \$install -Recurse -Force/);
-  assert.match(updater, /Copy-Item -Destination \$backup -Recurse -Force/);
+  assert.match(updater, /Copy-DirectoryContents \$replacement \$install "Activating the new installation"/);
+  assert.match(updater, /Copy-DirectoryContents \$install \$backup "Backing up the current installation"/);
+});
+
+test("successful updates verify restart and remove every disposable artifact", () => {
+  assert.match(main, /verifyDownloadedAsset\(asset, zipPath\)/);
+  assert.match(main, /"-WindowStyle",\s*"Hidden"/s);
+  assert.match(main, /"-UserDataDir",\s*app\.getPath\("userData"\)/s);
+  assert.match(updater, /Get-PackageVersion \$install/);
+  assert.match(updater, /Updated launcher exited before restart verification completed/);
+  assert.match(updater, /Remove-DirectoryWithRetry \$replacement "Removing prepared replacement"/);
+  assert.match(updater, /Remove-DirectoryWithRetry \$update "Removing downloaded update files"/);
+  assert.match(updater, /Remove-DirectoryWithRetry \$backup "Removing previous launcher version"/);
+  assert.match(main, /cleanupStaleLauncherUpdates/);
+  assert.match(main, /if \(updateInProgress\) \{\s*scheduleStaleUpdateCleanup\(\)/s);
+  assert.match(packageScript, /update-cleanup\.js/);
+});
+
+test("recoverable update failures restore, restart, and clean up", () => {
+  assert.match(updater, /Copy-DirectoryContents \$backup \$install "Restoring the previous installation"/);
+  assert.match(updater, /Start-Process -FilePath \(Join-Path \$install \$ExeName\)/);
+  assert.match(updater, /Show-UpdateFailure \$message/);
+  assert.match(updater, /foreach \(\$artifact in @\(\$replacement, \$backup, \$update\)\)/);
+  assert.match(updater, /Recovery files were preserved to avoid data loss/);
 });
 
 test("portable archive is versioned but its application folder is stable", () => {

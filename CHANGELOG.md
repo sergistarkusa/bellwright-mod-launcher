@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.9] - 2026-07-16
+
+- Remove downloaded ZIPs, extracted packages, updater scripts, logs, `.new-*` folders, and `.old-*` backups after a verified update.
+- Clean update caches and failed updater folders left by older launcher versions, including older adjacent versioned portable installations when running from the stable `BellwrightModLauncher` folder.
+- Verify the GitHub release asset SHA-256 digest before extracting or applying it.
+- Hide the PowerShell updater window.
+- Verify the installed version and restarted launcher process before deleting the rollback copy.
+- Restore and restart the previous version after a recoverable update failure, show a visible error, and remove failed staging files.
+- Preserve recovery files only if rollback itself cannot be completed, avoiding destruction of the last usable launcher copy.
+
 ## [0.5.8] - 2026-07-16
 
 - Reworked portable updates to replace files inside the stable installation folder instead of renaming the folder itself.

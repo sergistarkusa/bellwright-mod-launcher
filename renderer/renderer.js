@@ -1148,8 +1148,9 @@ async function updateLauncher() {
     if (result.status === "up-to-date") {
       showToast("Launcher is up to date.");
       hideUpdateProgressSoon();
-    } else if (result.status === "staged") {
-      showToast(`Update v${result.latestVersion} downloaded. Restart when ready.`);
+    } else if (result.status === "cancelled") {
+      showToast("Update cancelled. Downloaded files were removed.");
+      hideUpdateProgressSoon();
     }
   } catch (error) {
     showToast(error.message || String(error), true);

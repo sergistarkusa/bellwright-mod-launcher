@@ -1,6 +1,6 @@
 {
   "name": "bellwright-mod-launcher",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "Small local mod launcher for Bellwright.",
   "main": "main.js",
   "repository": {

@@ -36,9 +36,9 @@ Use the latest Windows portable ZIP from the GitHub Releases page.
 
 Unzip it anywhere and run `BellwrightModLauncher.exe` from the stable `BellwrightModLauncher` folder. The downloaded ZIP filename contains the release version; the application folder does not.
 
-**Upgrading from v0.5.7 or older:** close the old launcher, download v0.5.8 or newer manually, extract the stable `BellwrightModLauncher` folder, and run its executable once. Older builds can download an update but may fail while replacing their own installation folder. Version 0.5.8 replaces files inside the stable folder instead of renaming the folder, so later updates avoid this Windows directory-lock failure.
+**Upgrading from v0.5.7 or older:** close the old launcher, download v0.5.9 or newer manually, extract the stable `BellwrightModLauncher` folder beside the old portable folder, and run its executable once. Older builds can download an update but may fail while replacing their own installation folder. The current launcher removes failed `.new-*`/`.old-*` folders and older adjacent versioned portable installations after the stable folder starts successfully.
 
-**Native mod users should install v0.5.8 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
+**Native mod users should install v0.5.9 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 
@@ -60,7 +60,7 @@ Compatible mods can ship a schema-versioned `launcher-settings.json` plus signed
 
 Conflict details are based on the asset metadata supplied by each mod's `modinfo.json`. They identify likely asset-level conflicts, but they cannot prove every possible gameplay or Blueprint logic conflict.
 
-The update button checks the latest GitHub Release. When a newer portable ZIP is available, the launcher downloads it, stages it, then asks to restart and applies a clean folder replacement before launching the new version.
+The update button checks the latest GitHub Release, verifies its SHA-256 digest, and applies it inside the stable launcher folder. After the new process is verified, downloaded archives, extracted files, updater scripts, logs, rollback copies, and stale folders from older updater attempts are removed. A recoverable failure restores and restarts the previous version instead of leaving partial update files behind.
 
 ## Build From Source
 
