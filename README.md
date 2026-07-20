@@ -18,10 +18,10 @@ Drag a mod between columns or use the row action button to enable/disable it. Th
 - Refresh the running/closed game state automatically.
 - Open the Bellwright mods folder.
 - Launch Bellwright through Steam.
-- Load trusted native runtime mods automatically after Bellwright reaches the main menu, even if the launcher window is closed while the game starts.
-- Block modified, unknown, or game-incompatible native payloads before execution.
+- Load verified and community native runtime mods directly from their local or Steam Workshop folders after Bellwright reaches the main menu, even if the launcher window is closed while the game starts.
+- Mark signed payloads as verified and require an explicit user warning before running unsigned community DLLs.
 - Save and load named active-mod presets, including load order.
-- Configure compatible asset and trusted native mods from a launcher-provided settings menu, with no script extender required.
+- Configure compatible asset and native mods from a launcher-provided settings menu, with no script extender required.
 - Preserve selected mod options in named and shared presets and restore them after Workshop updates.
 - Share presets as compact `BWL1` codes and preview imported mod availability before saving.
 - Change active mod load priority through Bellwright's `modloadorder.json`.
@@ -36,11 +36,11 @@ Use the latest Windows portable ZIP from the GitHub Releases page.
 
 Unzip it anywhere and run `BellwrightModLauncher.exe` from the stable `BellwrightModLauncher` folder. The downloaded ZIP filename contains the release version; the application folder does not.
 
-**Upgrading from v0.5.7 or older:** close the old launcher, download v0.5.10 or newer manually, extract the stable `BellwrightModLauncher` folder beside the old portable folder, and run its executable once. Older builds can download an update but may fail while replacing their own installation folder. The current launcher removes failed `.new-*`/`.old-*` folders and older adjacent versioned portable installations after the stable folder starts successfully.
+**Upgrading from v0.5.8 or newer:** use the launcher's normal Update button. These versions already replace files inside the stable `BellwrightModLauncher` folder and can install v0.6.0 automatically. The transition itself still starts through the older hidden PowerShell handoff; after v0.6.0 is running, every later update uses the new GUI-safe handoff. Versions through v0.5.7 may require one final manual download because their older updater predates stable in-place replacement.
 
-**Native mod users should install v0.5.10 or newer.** The launcher remains active in the background until native runtime loading is complete, stages verified per-mod configuration beside trusted payloads, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
+**Native mod users should install v0.6.0 or newer.** The launcher remains active in the background until native runtime loading is complete, loads each approved DLL directly from its mod folder, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
 
-The updater does not depend on Microsoft Edge. It downloads the GitHub Release directly over HTTPS and uses hidden Windows PowerShell for ZIP extraction and in-place replacement. Cleanup retries temporary Windows file locks and schedules another background pass if a lock outlives the first attempt.
+The updater does not depend on Microsoft Edge. It downloads the GitHub Release directly over HTTPS and uses a GUI-safe native handoff to start hidden Windows PowerShell for ZIP extraction and in-place replacement. The handoff does not create or inherit a console window. Cleanup retries temporary Windows file locks and schedules another background pass if a lock outlives the first attempt.
 
 See [CHANGELOG.md](CHANGELOG.md) for release details.
 
@@ -50,15 +50,17 @@ This is an unofficial community tool and is not affiliated with Donkey Crew, Sna
 
 The launcher moves mod folders between active and disabled locations, updates `modinfo.json` active flags when possible, and keeps disabled local mods outside `Content/Mods` so Bellwright does not mount them accidentally. Close Bellwright before changing mod state or load order.
 
-Trusted native mods include a `native-runtime.json` manifest. The launcher verifies the payload hash and current Bellwright executable, stages the DLL in its private runtime cache, and uses its bundled injector only after the main menu has loaded. Workshop packages cannot provide their own executable injector.
+Native mods can declare their entry DLL in `native-runtime.json`, or place x64 DLLs in a `native` folder for automatic discovery. When several DLLs are present, the launcher parses their PE import graph and loads the root mod DLL instead of its dependencies. An ambiguous package receives a one-time DLL picker. The bundled injector receives the selected DLL's absolute path and loads it directly from the mod folder; Workshop packages cannot provide their own executable injector.
+
+An ExcelsiorOne Ed25519 signature gives a payload the `Verified` status and cryptographically binds its hash, manifest, and supported Bellwright builds. Signatures are optional for community native mods. Unsigned or invalidly signed DLLs are not silently executed: the user can approve the exact version or trust future updates from that specific mod after a native-code warning.
 
 Bellwright must be started while the launcher is running whenever a native mod is enabled. Launching the game directly from Steam while the launcher is not running cannot load native Workshop payloads. Launching through the launcher is the supported path.
 
-Version 0.4.0 intentionally allows one active native mod at a time. A later shared host can safely multiplex several native plugins without relying on Windows to distinguish identically named staged DLLs.
+Several approved native mods can be active at once. The launcher tracks each one by its real absolute module path instead of renaming every payload to the same staged filename.
 
 Presets store the currently active local and Workshop mods by folder/source, load order, and compatible launcher settings. Loading a preset changes the active mod set, options, and priority order to match it, so Bellwright must be closed.
 
-Compatible mods can ship a schema-versioned `launcher-settings.json` plus signed package or bounded `.cfg` variants inside their own folder. Variant payloads use a non-mountable `.variant` suffix until selected. The launcher validates every declared path and SHA-256 hash, stages the complete replacement set, and rolls back if a swap fails. Trusted native configs are copied beside the verified payload before injection. Settings are never changed while Bellwright is running. Before launch, saved choices are reapplied when a Workshop update has restored the default package.
+Compatible mods can ship a schema-versioned `launcher-settings.json` plus signed package or bounded `.cfg` variants inside their own folder. Variant payloads use a non-mountable `.variant` suffix until selected. The launcher validates every declared path and SHA-256 hash, stages the complete replacement set, and rolls back if a swap fails. Native DLLs read the selected config from their own mod folder; no runtime copy is created. Settings are never changed while Bellwright is running. Before launch, saved choices are reapplied when a Workshop update has restored the default package.
 
 Conflict details are based on the asset metadata supplied by each mod's `modinfo.json`. They identify likely asset-level conflicts, but they cannot prove every possible gameplay or Blueprint logic conflict.
 

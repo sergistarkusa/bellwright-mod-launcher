@@ -7,6 +7,7 @@ const test = require("node:test");
 
 const root = path.resolve(__dirname, "..");
 const updaterSource = path.join(root, "runtime", "apply-update.ps1");
+const handoff = path.join(root, "runtime", "BellwrightUpdateHandoff.exe");
 const powershell = path.join(
   process.env.SystemRoot || "C:\\Windows",
   "System32",
@@ -94,6 +95,63 @@ function runUpdater({ installDir, stagedDir, updateRoot, expectedVersion }) {
   );
 }
 
+function startUpdaterThroughHandoff({ installDir, stagedDir, updateRoot, expectedVersion }) {
+  const scriptPath = path.join(updateRoot, "apply-update.ps1");
+  const logPath = path.join(updateRoot, "apply-update.log");
+  fs.copyFileSync(updaterSource, scriptPath);
+  fs.writeFileSync(logPath, "integration test scheduled through GUI handoff\n");
+  return spawnSync(
+    handoff,
+    [
+      "--log",
+      logPath,
+      powershell,
+      "-WindowStyle",
+      "Hidden",
+      "-NoProfile",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      scriptPath,
+      "-InstallDir",
+      installDir,
+      "-StagedAppDir",
+      stagedDir,
+      "-UpdateRoot",
+      updateRoot,
+      "-ExeName",
+      "BellwrightModLauncher.exe",
+      "-ExpectedVersion",
+      expectedVersion,
+      "-UserDataDir",
+      path.dirname(path.dirname(updateRoot)),
+      "-ProcessId",
+      String(process.pid),
+      "-LogPath",
+      logPath
+    ],
+    {
+      encoding: "utf8",
+      timeout: 10000,
+      env: {
+        ...process.env,
+        BELLWRIGHT_UPDATER_SUPPRESS_ERROR_DIALOG: "1"
+      }
+    }
+  );
+}
+
+function waitFor(predicate, message, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+  assert.fail(message);
+}
+
 function killMarkerProcess(installDir) {
   const marker = path.join(installDir, "restart.marker");
   if (!fs.existsSync(marker)) {
@@ -149,6 +207,47 @@ test("PowerShell updater leaves only the verified current installation after suc
     assert.equal(JSON.parse(fs.readFileSync(path.join(installDir, "resources", "app", "package.json"))).version, "0.5.9");
     assert.equal(fs.readFileSync(path.join(installDir, "payload.txt"), "utf8"), "payload-0.5.9");
     assert.equal(fs.existsSync(path.join(installDir, "restart.marker")), true);
+    assertNoUpdaterArtifacts(programsRoot, updatesRoot);
+  } finally {
+    killMarkerProcess(installDir);
+    removeTestRoot(testRoot);
+  }
+});
+
+test("GUI-safe handoff completes a full update without a console parent", { skip: process.platform !== "win32" }, () => {
+  const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bellwright-updater-handoff-"));
+  const programsRoot = path.join(testRoot, "programs");
+  const installDir = path.join(programsRoot, "BellwrightModLauncher");
+  const updatesRoot = path.join(testRoot, "user-data", "updates");
+  const updateRoot = path.join(updatesRoot, "0.6.0-test");
+  const stagedDir = path.join(updateRoot, "extracted", "BellwrightModLauncher");
+  const oldExe = path.join(testRoot, "old-launcher.exe");
+  const newExe = path.join(testRoot, "new-launcher.exe");
+  try {
+    fs.mkdirSync(updateRoot, { recursive: true });
+    compileLauncher(oldExe, { typeName: "OldLauncherHandoff060" });
+    compileLauncher(newExe, { typeName: "NewLauncherHandoff060" });
+    createPackage(installDir, "0.5.10", oldExe);
+    createPackage(stagedDir, "0.6.0", newExe);
+
+    const result = startUpdaterThroughHandoff({ installDir, stagedDir, updateRoot, expectedVersion: "0.6.0" });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr, "");
+    waitFor(
+      () => {
+        const siblings = fs.existsSync(programsRoot)
+          ? fs.readdirSync(programsRoot).filter((name) => /\.(?:new|old)-\d{17}$/i.test(name))
+          : [];
+        return fs.existsSync(path.join(installDir, "restart.marker")) &&
+          !fs.existsSync(updatesRoot) &&
+          siblings.length === 0;
+      },
+      "GUI-safe update handoff did not finish"
+    );
+
+    assert.equal(JSON.parse(fs.readFileSync(path.join(installDir, "resources", "app", "package.json"))).version, "0.6.0");
+    assert.equal(fs.readFileSync(path.join(installDir, "payload.txt"), "utf8"), "payload-0.6.0");
     assertNoUpdaterArtifacts(programsRoot, updatesRoot);
   } finally {
     killMarkerProcess(installDir);

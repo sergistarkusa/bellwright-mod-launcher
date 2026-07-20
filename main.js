@@ -368,7 +368,7 @@ function scheduleStaleUpdateCleanup(delayMs = 5000, retryAttempt = 0) {
   timer.unref?.();
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   nativeRuntimeManager = new NativeRuntimeManager({
     userDataPath: app.getPath("userData"),
     bundledInjectorPath: path.join(__dirname, "runtime", "BellwrightNativeInjector.exe"),
@@ -382,6 +382,9 @@ app.whenReady().then(() => {
         mainWindow.webContents.send("mods:nativeRuntimeChanged", status);
       }
     }
+  });
+  await nativeRuntimeManager.cleanupLegacyRuntimeCache().catch((error) => {
+    console.error("[native-runtime] failed to remove legacy staging cache", error);
   });
   createWindow();
   startGameRunningWatcher();
@@ -669,8 +672,9 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
 async function getGameProcess() {
   const names = [...GAME_PROCESS_NAMES].map((name) => path.basename(name, ".exe"));
   const script = `$names=@(${names.map((name) => `'${name.replace(/'/g, "''")}'`).join(",")});` +
-    "$p=Get-Process -Name $names -ErrorAction SilentlyContinue | Sort-Object StartTime -Descending | Select-Object -First 1;" +
-    "if($p){$native=@();try{$native=@($p.Modules|Where-Object {$_.ModuleName -eq 'BellwrightNativePayload.dll'}|ForEach-Object {$_.FileName})}catch{};" +
+    "$all=@(Get-Process -Name $names -ErrorAction SilentlyContinue);" +
+    "$p=$all|Sort-Object @{Expression={if($_.ProcessName -eq 'BellwrightGame-Win64-Shipping'){0}elseif($_.ProcessName -eq 'BellwrightGame'){1}else{2}}},@{Expression={$_.StartTime};Descending=$true}|Select-Object -First 1;" +
+    `if($p){$native=@();try{$native=@($p.Modules|Where-Object {$_.FileName -like '*\\steamapps\\workshop\\content\\${GAME_APP_ID}\\*' -or $_.FileName -like '*\\Bellwright\\Content\\Mods\\*' -or $_.ModuleName -eq 'BellwrightNativePayload.dll'}|ForEach-Object {$_.FileName})}catch{};` +
     "[pscustomobject]@{pid=$p.Id;startTime=$p.StartTime.ToUniversalTime().ToString('o');path=$p.Path;nativeModules=$native}|ConvertTo-Json -Compress}";
   const output = await execFileText("powershell", ["-NoProfile", "-Command", script]);
   if (!output.trim()) {
@@ -1137,10 +1141,11 @@ async function getState() {
   });
   const conflicts = buildModConflicts(mods);
   const nativeRuntime = nativeRuntimeManager ? nativeRuntimeManager.getStatus() : null;
-  const nativeRuntimeById = new Map((nativeRuntime?.mods || []).map((runtimeMod) => [runtimeMod.id, runtimeMod]));
+  const nativeRuntimeById = new Map((nativeRuntime?.mods || []).map((runtimeMod) => [runtimeMod.identity || runtimeMod.id, runtimeMod]));
   for (const mod of mods) {
-    if (mod.nativeRuntime?.id && nativeRuntimeById.has(mod.nativeRuntime.id)) {
-      mod.nativeRuntime = { ...mod.nativeRuntime, ...nativeRuntimeById.get(mod.nativeRuntime.id) };
+    const runtimeKey = mod.nativeRuntime?.identity || mod.nativeRuntime?.id;
+    if (runtimeKey && nativeRuntimeById.has(runtimeKey)) {
+      mod.nativeRuntime = { ...mod.nativeRuntime, ...nativeRuntimeById.get(runtimeKey) };
     }
   }
 
@@ -1294,6 +1299,66 @@ async function disableMod(payload) {
   return getState();
 }
 
+async function authorizeNativeRuntimeForMod(mod) {
+  let runtime = mod?.nativeRuntime;
+  if (!runtime) {
+    return;
+  }
+
+  if (runtime.selectionRequired) {
+    const candidates = Array.isArray(runtime.candidatePayloads) ? runtime.candidatePayloads.slice(0, 8) : [];
+    if (!candidates.length) {
+      throw new Error(`${mod.title} does not contain a detectable x64 native payload.`);
+    }
+    if ((runtime.candidatePayloads || []).length > candidates.length) {
+      throw new Error(`${mod.title} contains too many possible native entry DLLs. Add native-runtime.json to identify the entry DLL.`);
+    }
+    const selection = await dialog.showMessageBox(mainWindow, {
+      type: "question",
+      buttons: ["Cancel", ...candidates],
+      defaultId: 1,
+      cancelId: 0,
+      title: "Choose native mod DLL",
+      message: `${mod.title} contains multiple possible native entry DLLs.`,
+      detail: "Choose the DLL that starts the mod. Dependency DLLs should not be selected."
+    });
+    if (selection.response === 0) {
+      throw new Error("Native mod activation was cancelled.");
+    }
+    await nativeRuntimeManager.setPayloadSelection(runtime.identity, candidates[selection.response - 1]);
+    runtime = nativeRuntimeManager.publicInspection(
+      await nativeRuntimeManager.inspectMod(mod.path, mod.status === "active")
+    );
+    if (!runtime || runtime.selectionRequired || runtime.phase === "invalid") {
+      throw new Error(runtime?.message || "The selected native DLL is invalid.");
+    }
+  }
+
+  if (runtime.verified || runtime.approved) {
+    return;
+  }
+  const signatureWarning = runtime.signatureStatus === "invalid"
+    ? "The package contains a signature, but it is not valid for this DLL.\n\n"
+    : "";
+  const choice = await dialog.showMessageBox(mainWindow, {
+    type: "warning",
+    buttons: ["Cancel", "Allow this DLL", "Trust future updates"],
+    defaultId: 1,
+    cancelId: 0,
+    title: "Community native mod",
+    message: `${mod.title} contains unverified native code.`,
+    detail: `${signatureWarning}Native DLLs run inside Bellwright with your Windows user permissions. "Allow this DLL" approves only this exact file. "Trust future updates" also approves replacement DLLs downloaded later for this same mod.\n\nDLL: ${runtime.payload}\nSHA-256: ${runtime.actualHash}`
+  });
+  if (choice.response === 0) {
+    throw new Error("Native mod activation was cancelled.");
+  }
+  await nativeRuntimeManager.approveNativeMod(
+    runtime.identity,
+    choice.response === 2 ? "item" : "version",
+    runtime.actualHash
+  );
+}
+
 async function enableMod(payload) {
   const folderName = payload?.folderName;
   const installPaths = await getInstallPaths();
@@ -1327,11 +1392,13 @@ async function enableMod(payload) {
       sourceLabel: "Steam Workshop",
       workshopId: folderName
     });
+    await authorizeNativeRuntimeForMod(downloadedMod);
     await fs.rm(sourcePath, { recursive: true, force: true });
     await setModActiveFlag(targetPath, true).catch(() => {});
     await appendModToLoadOrder(downloadedMod);
     return getState();
   }
+  await authorizeNativeRuntimeForMod(mod);
   await moveDirectory(sourcePath, targetPath, installPaths);
   await setModActiveFlag(targetPath, true).catch(() => {});
   await appendModToLoadOrder(mod);
@@ -2076,6 +2143,7 @@ async function startUpdaterAndQuit(stagedAppRoot, updateRoot, expectedVersion) {
   const installDir = getInstallDirectory();
   const scriptPath = await writeUpdaterScript(updateRoot);
   const logPath = path.join(updateRoot, "apply-update.log");
+  const handoffPath = path.join(__dirname, "runtime", "BellwrightUpdateHandoff.exe");
   const powershellPath = path.join(
     process.env.SystemRoot || "C:\\Windows",
     "System32",
@@ -2086,15 +2154,21 @@ async function startUpdaterAndQuit(stagedAppRoot, updateRoot, expectedVersion) {
   if (!(await exists(powershellPath))) {
     throw new Error(`PowerShell was not found at ${powershellPath}`);
   }
+  if (!(await exists(handoffPath))) {
+    throw new Error(`Update handoff helper was not found at ${handoffPath}`);
+  }
 
   await fs.writeFile(
     logPath,
-    `${new Date().toISOString()} Update scheduled through Electron relaunch.\n`,
+    `${new Date().toISOString()} Update scheduled through GUI-safe handoff.\n`,
     "utf8"
   );
   app.relaunch({
-    execPath: powershellPath,
+    execPath: handoffPath,
     args: [
+      "--log",
+      logPath,
+      powershellPath,
       "-WindowStyle",
       "Hidden",
       "-NoProfile",
@@ -2302,6 +2376,10 @@ ipcMain.handle("mods:openModsFolder", async () => {
 
 ipcMain.handle("mods:launchGame", async () => {
   await applySavedVariantSelections();
+  const currentState = await getState();
+  for (const mod of currentState.mods.filter((candidate) => candidate.status === "active" && candidate.nativeRuntime)) {
+    await authorizeNativeRuntimeForMod(mod);
+  }
   // Native runtimes are injected only after Bellwright reaches the main menu.
   // Keep the process watcher alive if the user closes the launcher meanwhile.
   keepAliveForGameLaunchUntil = Date.now() + 120000;

@@ -12,6 +12,8 @@ $appFolderName = "BellwrightModLauncher"
 $outDir = Join-Path $distRoot $appFolderName
 $zipPath = Join-Path $releaseRoot "$archiveName.zip"
 
+& (Join-Path $PSScriptRoot "build-update-handoff.ps1")
+
 if (-not (Test-Path -LiteralPath (Join-Path $electronDist "electron.exe"))) {
   throw "Electron runtime not found. Run npm install first."
 }
@@ -35,10 +37,20 @@ if (Test-Path -LiteralPath $zipPath) {
 Copy-Item -LiteralPath $electronDist -Destination $outDir -Recurse
 Rename-Item -LiteralPath (Join-Path $outDir "electron.exe") -NewName "BellwrightModLauncher.exe"
 
+# Electron's fallback app is not used when resources\app is present. Leaving it
+# in update archives lets an older Electron handoff keep the extracted copy open,
+# which prevents the new launcher from removing that legacy update session.
+$defaultElectronApp = Join-Path $outDir "resources\default_app.asar"
+if (Test-Path -LiteralPath $defaultElectronApp) {
+  Remove-Item -LiteralPath $defaultElectronApp -Force
+}
+
 $appRoot = Join-Path $outDir "resources\app"
 New-Item -ItemType Directory -Force -Path $appRoot | Out-Null
 Copy-Item -LiteralPath (Join-Path $projectRoot "main.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "native-runtime.js") -Destination $appRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot "native-discovery.js") -Destination $appRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot "native-signature.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "variant-settings.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "update-cleanup.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "preload.js") -Destination $appRoot

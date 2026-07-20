@@ -74,6 +74,8 @@ let inspectedShareCode = null;
 let settingsModalMod = null;
 let launcherUpdateSupported = false;
 let launcherUpdateRepo = "GitHub";
+let latestNativeRuntime = null;
+let nativeRuntimeRevision = 0;
 
 const icons = {
   power: '<svg viewBox="0 0 24 24"><path d="M12 2v10" /><path d="M18.4 6.6a9 9 0 1 1-12.8 0" /></svg>',
@@ -284,8 +286,13 @@ function getNativeBadge(mod) {
   if (!mod.nativeRuntime) {
     return "";
   }
-  const errorPhases = new Set(["invalid", "missing", "untrusted", "blocked", "incompatible", "failed"]);
-  const className = errorPhases.has(mod.nativeRuntime.phase) ? "nativeError" : "native";
+  const errorPhases = new Set(["invalid", "missing", "blocked", "incompatible", "failed"]);
+  const warningPhases = new Set(["selection-required", "approval-required"]);
+  const className = errorPhases.has(mod.nativeRuntime.phase)
+    ? "nativeError"
+    : warningPhases.has(mod.nativeRuntime.phase) || !mod.nativeRuntime.verified
+      ? "nativeCommunity"
+      : "native";
   const label = escapeHtml(mod.nativeRuntime.label || "Native runtime");
   return `<span class="nativeStateBadge ${className}" title="${escapeHtml(mod.nativeRuntime.message || "Native runtime mod")}" aria-label="${label}">N</span>`;
 }
@@ -324,7 +331,14 @@ async function loadState() {
   try {
     setBusy(true);
     hideModTooltip();
-    state = await window.bellwrightMods.getState();
+    const nativeRevisionAtStart = nativeRuntimeRevision;
+    const nextState = await window.bellwrightMods.getState();
+    if (nativeRuntimeRevision !== nativeRevisionAtStart && latestNativeRuntime) {
+      mergeNativeRuntimeIntoState(nextState, latestNativeRuntime);
+    } else {
+      latestNativeRuntime = nextState.nativeRuntime;
+    }
+    state = nextState;
     render();
   } catch (error) {
     showToast(error.message || String(error), true);
@@ -360,15 +374,22 @@ function handleGameRunningChanged(gameRunning) {
   flushPendingGameRunningState();
 }
 
-function handleNativeRuntimeChanged(runtime) {
-  if (state) {
-    state.nativeRuntime = runtime;
-    const runtimeById = new Map((runtime?.mods || []).map((mod) => [mod.id, mod]));
-    for (const mod of state.mods) {
-      if (mod.nativeRuntime?.id && runtimeById.has(mod.nativeRuntime.id)) {
-        mod.nativeRuntime = { ...mod.nativeRuntime, ...runtimeById.get(mod.nativeRuntime.id) };
-      }
+function mergeNativeRuntimeIntoState(targetState, runtime) {
+  targetState.nativeRuntime = runtime;
+  const runtimeById = new Map((runtime?.mods || []).map((mod) => [mod.identity || mod.id, mod]));
+  for (const mod of targetState.mods || []) {
+    const runtimeKey = mod.nativeRuntime?.identity || mod.nativeRuntime?.id;
+    if (runtimeKey && runtimeById.has(runtimeKey)) {
+      mod.nativeRuntime = { ...mod.nativeRuntime, ...runtimeById.get(runtimeKey) };
     }
+  }
+}
+
+function handleNativeRuntimeChanged(runtime) {
+  latestNativeRuntime = runtime;
+  nativeRuntimeRevision += 1;
+  if (state) {
+    mergeNativeRuntimeIntoState(state, runtime);
     render();
     return;
   }
@@ -707,7 +728,7 @@ function renderColumn(list, empty, mods) {
     const settingsButton = settingsGroup
       ? `<button class="settingsButton" type="button" title="Mod settings: ${escapeHtml(selectedSetting?.label || settingsGroup.selectedOption)}" aria-label="Open mod settings">${icons.settings}</button>`
       : "";
-    const note = mod.nativeRuntime && ["invalid", "missing", "untrusted", "blocked"].includes(mod.nativeRuntime.phase)
+    const note = mod.nativeRuntime && ["invalid", "missing", "blocked", "incompatible", "selection-required", "approval-required", "failed"].includes(mod.nativeRuntime.phase)
       ? mod.nativeRuntime.message
       : state.gameRunning
         ? "Close game first"

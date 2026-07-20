@@ -2,17 +2,27 @@ const crypto = require("crypto");
 const fs = require("fs/promises");
 const path = require("path");
 const childProcess = require("child_process");
+const {
+  normalizeHash,
+  normalizeRuntimeSignature,
+  normalizeSupportedGameHashes,
+  verifyRuntimeManifestSignature
+} = require("./native-signature");
+const { discoverNativePayload, parsePortableExecutable } = require("./native-discovery");
 
 const MANIFEST_FILE = "native-runtime.json";
-const STAGED_PAYLOAD_NAME = "BellwrightNativePayload.dll";
-const STAGED_INJECTOR_NAME = "BellwrightNativeInjector.exe";
-const STAGED_CONFIG_NAME = "BellwrightNativeConfig.cfg";
-const MAX_CONFIG_BYTES = 4096;
+const PREFERENCES_FILE = "native-runtime-preferences.json";
+const MAX_CONFIG_BYTES = 64 * 1024;
 const GAME_HASH_PRE_HOTFIX = "5d77d16d59831f684dce32d513db9cdc671f6f78d5b67b44f4e8d7b8f816b3e1";
 const GAME_HASH_HOTFIX_2026_07_16 = "a3adc853e56e8a707348027db70ec923909df5a06ab342b8de5f71fca4ea4251";
 
 const SETTLEMENT_IMMIGRATION_TRUST = {
   publisher: "ExcelsiorOne",
+  publicKeys: new Map([
+    ["excelsiorone-native-2026-01", `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAPz99HWrvJbeUwtCEsLgX56Qt+z7nyq7WwZ/sgAd35S0=
+-----END PUBLIC KEY-----`]
+  ]),
   payloadHashes: new Set([
     "4cd3f7d3b349cb678ff53e81bd66e8dcceb7d9cb87331a8906aabd3ef835c487",
     "059d0fc24713d668a014a0233780d53c74aec8ceb55107ac4ecd7d0c4a8ce223",
@@ -28,11 +38,12 @@ const SETTLEMENT_IMMIGRATION_TRUST = {
 };
 
 const TRUSTED_NATIVE_MODS = new Map([
-  ["excelsiorone.settlement-immigration", SETTLEMENT_IMMIGRATION_TRUST],
-  ["fsd.settlement-immigration", { ...SETTLEMENT_IMMIGRATION_TRUST, publisher: null }]
+  ["excelsiorone.settlement-immigration", SETTLEMENT_IMMIGRATION_TRUST]
 ]);
 
-const BUNDLED_INJECTOR_HASH = "cd07010b5f3114cd89c115d507bf8fb18f69c21b1b2c50d2f15522bb969faa8e";
+// Updated whenever the generic injector is rebuilt. The injector itself is still
+// pinned because it is executable code shipped by the launcher.
+const BUNDLED_INJECTOR_HASH = "2fe26595350ed061df60d55a5b48f63f612ce4b6d813a858900f159da486345c";
 
 async function readJson(filePath) {
   try {
@@ -64,11 +75,10 @@ function resolveInside(root, relativePath) {
   return resolved;
 }
 
-function normalizeHash(value) {
-  return typeof value === "string" && /^[a-f0-9]{64}$/i.test(value.trim()) ? value.trim().toLowerCase() : null;
-}
-
-function getSupportedGameHashes(trusted, payloadHash) {
+function getSupportedGameHashes(trusted, payloadHash, verifiedGameHashes = []) {
+  if (Array.isArray(verifiedGameHashes) && verifiedGameHashes.length) {
+    return new Set(verifiedGameHashes);
+  }
   if (trusted?.gameHashesByPayload instanceof Map) {
     return trusted.gameHashesByPayload.get(payloadHash) || new Set();
   }
@@ -85,12 +95,27 @@ function normalizeManifest(raw) {
     displayName: typeof raw.displayName === "string" ? raw.displayName.trim() : "",
     publisher: typeof raw.publisher === "string" ? raw.publisher.trim() : "",
     version: typeof raw.version === "string" ? raw.version.trim() : "",
-    payload: typeof raw.payload === "string" ? raw.payload.trim() : "",
+    payload: typeof raw.payload === "string" ? raw.payload.trim().replace(/\\/g, "/") : "",
     payloadSha256: normalizeHash(raw.payloadSha256),
-    config: typeof raw.config === "string" ? raw.config.trim() : "",
-    loadStage: raw.loadStage === "main-menu" ? "main-menu" : "",
-    healthLog: typeof raw.healthLog === "string" ? raw.healthLog.trim() : ""
+    config: typeof raw.config === "string" ? raw.config.trim().replace(/\\/g, "/") : "",
+    loadStage: raw.loadStage === "startup" ? "startup" : "main-menu",
+    healthLog: typeof raw.healthLog === "string" ? raw.healthLog.trim() : "",
+    supportedGameSha256: normalizeSupportedGameHashes(raw.supportedGameSha256),
+    signature: normalizeRuntimeSignature(raw.signature)
   };
+}
+
+function normalizePreference(raw) {
+  const trust = raw?.trust === "item" || raw?.trust === "version" ? raw.trust : "";
+  return {
+    payload: typeof raw?.payload === "string" ? raw.payload.replace(/\\/g, "/") : "",
+    trust,
+    hash: normalizeHash(raw?.hash)
+  };
+}
+
+function normalizedModulePath(value) {
+  return path.normalize(String(value || "")).toLowerCase();
 }
 
 class NativeRuntimeManager {
@@ -102,6 +127,7 @@ class NativeRuntimeManager {
     this.trustedNativeMods = options.trustedNativeMods || TRUSTED_NATIVE_MODS;
     this.onStatusChanged = options.onStatusChanged || (() => {});
     this.hashCache = new Map();
+    this.preferences = null;
     this.sessionPid = null;
     this.sessionReady = false;
     this.injectedIds = new Set();
@@ -130,10 +156,10 @@ class NativeRuntimeManager {
     this.onStatusChanged(this.getStatus());
   }
 
-  async hashFile(filePath) {
+  async hashFile(filePath, bypassCache = false) {
     const stat = await fs.stat(filePath);
     const cacheKey = `${filePath}:${stat.size}:${stat.mtimeMs}`;
-    if (this.hashCache.has(cacheKey)) {
+    if (!bypassCache && this.hashCache.has(cacheKey)) {
       return this.hashCache.get(cacheKey);
     }
     const hash = crypto.createHash("sha256").update(await fs.readFile(filePath)).digest("hex");
@@ -141,78 +167,268 @@ class NativeRuntimeManager {
     return hash;
   }
 
-  async inspectMod(folderPath, active, gameExecutablePath = null) {
-    const manifestPath = path.join(folderPath, MANIFEST_FILE);
-    if (!(await exists(manifestPath))) {
+  getPreferencesPath() {
+    return path.join(this.userDataPath, PREFERENCES_FILE);
+  }
+
+  async readPreferences() {
+    if (this.preferences) {
+      return this.preferences;
+    }
+    const raw = (await readJson(this.getPreferencesPath())) || {};
+    const mods = raw.mods && typeof raw.mods === "object" && !Array.isArray(raw.mods)
+      ? Object.fromEntries(Object.entries(raw.mods).map(([key, value]) => [key, normalizePreference(value)]))
+      : {};
+    this.preferences = { version: 1, mods };
+    return this.preferences;
+  }
+
+  async writePreferences() {
+    await fs.mkdir(this.userDataPath, { recursive: true });
+    await fs.writeFile(this.getPreferencesPath(), `${JSON.stringify(this.preferences || { version: 1, mods: {} }, null, 2)}\n`, "utf8");
+  }
+
+  async updatePreference(identity, patch) {
+    const store = await this.readPreferences();
+    store.mods[identity] = normalizePreference({ ...store.mods[identity], ...patch });
+    await this.writePreferences();
+    return store.mods[identity];
+  }
+
+  async setPayloadSelection(identity, relativePath) {
+    if (!identity || !relativePath || path.isAbsolute(relativePath) || relativePath.startsWith("..")) {
+      throw new Error("Invalid native payload selection.");
+    }
+    return this.updatePreference(identity, { payload: relativePath });
+  }
+
+  async approveNativeMod(identity, mode, payloadHash) {
+    if (!identity || !["version", "item"].includes(mode)) {
+      throw new Error("Invalid native runtime approval.");
+    }
+    return this.updatePreference(identity, { trust: mode, hash: mode === "version" ? payloadHash : "" });
+  }
+
+  async cleanupLegacyRuntimeCache() {
+    await fs.rm(path.join(this.userDataPath, "native-runtime"), { recursive: true, force: true });
+  }
+
+  async readModInfo(folderPath) {
+    const modInfo = (await readJson(path.join(folderPath, "modinfo.json"))) || {};
+    return {
+      title: typeof modInfo.title === "string" ? modInfo.title.trim() : "",
+      folderName: typeof modInfo.folderName === "string" ? modInfo.folderName.trim() : "",
+      author: typeof modInfo.author === "string" ? modInfo.author.trim() : "",
+      steamId: Number.isFinite(Number(modInfo.steamId)) ? Math.trunc(Number(modInfo.steamId)) : 0
+    };
+  }
+
+  getIdentity(folderPath) {
+    const folderName = path.basename(folderPath);
+    if (/^\d{6,}$/.test(folderName)) {
+      return `workshop:${folderName}`;
+    }
+    return `local:${folderName.toLowerCase()}`;
+  }
+
+  async inspectExplicitPayload(folderPath, relativePath) {
+    const payloadPath = resolveInside(folderPath, relativePath);
+    if (!payloadPath || !(await exists(payloadPath))) {
       return null;
     }
-
-    const manifest = normalizeManifest(await readJson(manifestPath));
-    if (!manifest || manifest.schemaVersion !== 1 || !manifest.id || !manifest.publisher || !manifest.payload) {
-      return { phase: "invalid", label: "Invalid runtime", message: "native-runtime.json is incomplete" };
+    const realRoot = await fs.realpath(folderPath);
+    const realPayloadPath = await fs.realpath(payloadPath);
+    const realRelative = path.relative(realRoot, realPayloadPath);
+    if (!realRelative || realRelative.startsWith("..") || path.isAbsolute(realRelative)) {
+      return null;
     }
+    const stat = await fs.stat(realPayloadPath);
+    if (!stat.isFile() || stat.size <= 0 || stat.size > 256 * 1024 * 1024) {
+      return null;
+    }
+    const pe = parsePortableExecutable(await fs.readFile(realPayloadPath));
+    if (!pe.isX64Dll) {
+      return null;
+    }
+    return {
+      path: realPayloadPath,
+      relativePath: path.relative(folderPath, payloadPath).replace(/\\/g, "/"),
+      imports: pe.imports,
+      exports: pe.exports,
+      size: stat.size
+    };
+  }
 
-    const payloadPath = resolveInside(folderPath, manifest.payload);
-    if (!payloadPath || !(await exists(payloadPath))) {
+  async inspectMod(folderPath, active, gameExecutablePath = null) {
+    const manifestPath = path.join(folderPath, MANIFEST_FILE);
+    const rawManifest = await readJson(manifestPath);
+    const manifest = normalizeManifest(rawManifest);
+    const modInfo = await this.readModInfo(folderPath);
+    const identity = this.getIdentity(folderPath);
+    const preferences = await this.readPreferences();
+    const preference = normalizePreference(preferences.mods[identity]);
+    const displayName = manifest?.displayName || modInfo.title || modInfo.folderName || path.basename(folderPath);
+    const publisher = manifest?.publisher || modInfo.author || "Unknown";
+    const hints = [displayName, modInfo.folderName, path.basename(folderPath), identity];
+
+    let discovery = null;
+    if (manifest?.payload) {
+      const explicit = await this.inspectExplicitPayload(folderPath, manifest.payload);
+      if (explicit) {
+        discovery = { selected: explicit, candidates: [explicit], reason: "manifest" };
+      }
+    }
+    if (!discovery) {
+      discovery = await discoverNativePayload(folderPath, hints, preference.payload);
+    }
+    if (!rawManifest && !discovery.selected && !discovery.candidates.length) {
+      return null;
+    }
+    if (!discovery.selected && discovery.candidates.length) {
       return {
-        ...manifest,
-        phase: "missing",
-        label: "Payload missing",
-        message: "The native payload file was not found"
+        schemaVersion: manifest?.schemaVersion || 0,
+        id: manifest?.id || identity,
+        identity,
+        displayName,
+        publisher,
+        version: manifest?.version || "",
+        phase: "selection-required",
+        label: "Choose native DLL",
+        message: "Multiple possible native entry DLLs were found",
+        verified: false,
+        approved: false,
+        selectionRequired: true,
+        candidatePayloads: discovery.candidates.map((candidate) => candidate.relativePath),
+        detectionReason: discovery.reason
+      };
+    }
+    if (!discovery.selected) {
+      return {
+        schemaVersion: manifest?.schemaVersion || 0,
+        id: manifest?.id || identity,
+        identity,
+        displayName,
+        publisher,
+        version: manifest?.version || "",
+        phase: "invalid",
+        label: "Invalid native mod",
+        message: "No x64 native payload DLL was found",
+        verified: false,
+        approved: false,
+        candidatePayloads: []
       };
     }
 
-    const trusted = this.trustedNativeMods.get(manifest.id);
-    if (!trusted || (trusted.publisher && trusted.publisher !== manifest.publisher)) {
-      return { ...manifest, phase: "untrusted", label: "Untrusted", message: "Publisher is not trusted by this launcher" };
-    }
-
+    const payloadPath = discovery.selected.path;
+    const payload = discovery.selected.relativePath;
     const actualHash = await this.hashFile(payloadPath);
-    if (manifest.payloadSha256 !== actualHash || !trusted.payloadHashes.has(actualHash)) {
-      return { ...manifest, phase: "blocked", label: "Blocked", message: "Payload signature does not match" };
-    }
+    const normalized = manifest || normalizeManifest({});
+    normalized.id = normalized.id || identity;
+    normalized.displayName = displayName;
+    normalized.publisher = publisher;
+    normalized.payload = payload;
+
+    const trusted = this.trustedNativeMods.get(normalized.id);
+    const publisherMatches = Boolean(trusted) && (!trusted.publisher || trusted.publisher === normalized.publisher);
+    const declaredHashMatches = Boolean(normalized.payloadSha256) && normalized.payloadSha256 === actualHash;
+    const pinnedPayload = publisherMatches && declaredHashMatches &&
+      trusted.payloadHashes instanceof Set && trusted.payloadHashes.has(actualHash);
+    const signedPayload = publisherMatches && declaredHashMatches &&
+      verifyRuntimeManifestSignature(normalized, trusted.publicKeys);
+    const verified = Boolean(pinnedPayload || signedPayload);
+    const signatureStatus = signedPayload ? "verified" : pinnedPayload ? "verified-legacy" : normalized.signature ? "invalid" : "unsigned";
+    const verifiedGameHashes = signedPayload ? normalized.supportedGameSha256 : [];
+    const approved = verified || preference.trust === "item" ||
+      (preference.trust === "version" && preference.hash === actualHash);
 
     let configPath = null;
-    let configHash = null;
-    if (manifest.config) {
-      configPath = resolveInside(folderPath, manifest.config);
-      if (!configPath || !(await exists(configPath))) {
-        return { ...manifest, phase: "missing", label: "Config missing", message: "The native runtime config file was not found" };
+    if (normalized.config) {
+      configPath = resolveInside(folderPath, normalized.config);
+      const realRoot = await fs.realpath(folderPath);
+      const realConfigPath = configPath ? await fs.realpath(configPath).catch(() => null) : null;
+      const realConfigRelative = realConfigPath ? path.relative(realRoot, realConfigPath) : "..";
+      if (realConfigRelative.startsWith("..") || path.isAbsolute(realConfigRelative)) {
+        configPath = null;
+      } else {
+        configPath = realConfigPath;
       }
-      const configStat = await fs.stat(configPath);
-      if (!configStat.isFile() || configStat.size > MAX_CONFIG_BYTES) {
-        return { ...manifest, phase: "invalid", label: "Invalid config", message: "The native runtime config file is invalid" };
-      }
-      configHash = await this.hashFile(configPath);
-    }
-
-    const installedGameExecutablePath = active ? gameExecutablePath || await this.resolveGameExecutablePath() : null;
-    if (installedGameExecutablePath && (await exists(installedGameExecutablePath))) {
-      const gameHash = await this.hashFile(installedGameExecutablePath);
-      const supportedGameHashes = getSupportedGameHashes(trusted, actualHash);
-      if (!supportedGameHashes.has(gameHash)) {
+      const configStat = configPath ? await fs.stat(configPath).catch(() => null) : null;
+      if (!configStat?.isFile() || configStat.size > MAX_CONFIG_BYTES) {
         return {
-          ...manifest,
-          phase: "incompatible",
-          label: "Update required",
-          message: "Update required: this native runtime does not support the installed Bellwright build",
-          payloadPath,
-          actualHash,
-          configPath,
-          configHash
+          ...normalized,
+          id: normalized.id,
+          identity,
+          displayName,
+          publisher,
+          payload,
+          phase: "invalid",
+          label: "Invalid config",
+          message: "The native runtime config file is missing or invalid",
+          verified,
+          approved,
+          signatureStatus,
+          candidatePayloads: discovery.candidates.map((candidate) => candidate.relativePath)
         };
       }
     }
 
+    if (active && verified) {
+      const installedGameExecutablePath = gameExecutablePath || await this.resolveGameExecutablePath();
+      if (installedGameExecutablePath && (await exists(installedGameExecutablePath))) {
+        const gameHash = await this.hashFile(installedGameExecutablePath);
+        const supportedGameHashes = getSupportedGameHashes(trusted, actualHash, verifiedGameHashes);
+        if (supportedGameHashes.size && !supportedGameHashes.has(gameHash)) {
+          return {
+            ...normalized,
+            id: normalized.id,
+            identity,
+            displayName,
+            publisher,
+            payload,
+            phase: "incompatible",
+            label: "Update required",
+            message: "This verified native mod does not support the installed Bellwright build",
+            verified,
+            approved,
+            signatureStatus,
+            payloadPath,
+            actualHash,
+            verifiedGameHashes,
+            configPath,
+            candidatePayloads: discovery.candidates.map((candidate) => candidate.relativePath),
+            detectionReason: discovery.reason
+          };
+        }
+      }
+    }
+
+    const phase = !active ? "disabled" : !approved ? "approval-required" : "ready";
+    const label = verified ? "Verified native" : approved ? "Community native" : "Approval required";
+    const message = verified
+      ? "Verified native payload is ready to load directly from the mod folder"
+      : approved
+        ? "Community native payload is ready to load directly from the mod folder"
+        : "This mod contains unverified native code and needs user approval";
     return {
-      ...manifest,
-      phase: active ? "ready" : "disabled",
-      label: active ? "Runtime ready" : "Runtime disabled",
-      message: active ? "Trusted payload is ready to load" : "Enable the mod to load its runtime",
+      ...normalized,
+      id: normalized.id,
+      identity,
+      displayName,
+      publisher,
+      payload,
+      phase,
+      label,
+      message,
+      verified,
+      approved,
+      approvalMode: verified ? "verified" : preference.trust,
+      signatureStatus,
       payloadPath,
       actualHash,
+      verifiedGameHashes,
       configPath,
-      configHash
+      candidatePayloads: discovery.candidates.map((candidate) => candidate.relativePath),
+      detectionReason: discovery.reason
     };
   }
 
@@ -220,7 +436,7 @@ class NativeRuntimeManager {
     if (!inspection) {
       return null;
     }
-    const { payloadPath, actualHash, configPath, configHash, ...publicFields } = inspection;
+    const { payloadPath, configPath, verifiedGameHashes, ...publicFields } = inspection;
     return publicFields;
   }
 
@@ -268,48 +484,41 @@ class NativeRuntimeManager {
     }
   }
 
-  async runInjector(executable) {
+  async runInjector(payloadPath, targetPid) {
     return new Promise((resolve, reject) => {
-      childProcess.execFile(executable, [], { windowsHide: true, timeout: 30000 }, (error, stdout, stderr) => {
-        if (error) {
-          reject(new Error((stderr || stdout || error.message).trim()));
-          return;
+      childProcess.execFile(
+        this.bundledInjectorPath,
+        [],
+        {
+          windowsHide: true,
+          timeout: 30000,
+          env: {
+            ...process.env,
+            BELLWRIGHT_NATIVE_PAYLOAD: payloadPath,
+            BELLWRIGHT_NATIVE_TARGET_PID: String(targetPid)
+          }
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            reject(new Error((stderr || stdout || error.message).trim()));
+            return;
+          }
+          resolve(stdout);
         }
-        resolve(stdout);
-      });
+      );
     });
   }
 
-  async stageAndInject(inspection) {
-    const injectorHash = await this.hashFile(this.bundledInjectorPath);
+  async injectDirect(inspection, targetPid) {
+    const injectorHash = await this.hashFile(this.bundledInjectorPath, true);
     if (injectorHash !== BUNDLED_INJECTOR_HASH) {
       throw new Error("Bundled native injector failed integrity verification");
     }
-
-    const stageRoot = this.getStageRoot(inspection);
-    await fs.mkdir(stageRoot, { recursive: true });
-    const stagedPayload = path.join(stageRoot, STAGED_PAYLOAD_NAME);
-    const stagedInjector = path.join(stageRoot, STAGED_INJECTOR_NAME);
-    const stagedConfig = path.join(stageRoot, STAGED_CONFIG_NAME);
-    await fs.copyFile(inspection.payloadPath, stagedPayload);
-    await fs.copyFile(this.bundledInjectorPath, stagedInjector);
-    if ((await this.hashFile(stagedPayload)) !== inspection.actualHash) {
-      throw new Error("Staged payload failed integrity verification");
+    const currentPayloadHash = await this.hashFile(inspection.payloadPath, true);
+    if (currentPayloadHash !== inspection.actualHash) {
+      throw new Error(`${inspection.displayName}: native payload changed before injection`);
     }
-    if (inspection.configPath) {
-      await fs.copyFile(inspection.configPath, stagedConfig);
-      if ((await this.hashFile(stagedConfig)) !== inspection.configHash) {
-        throw new Error("Staged native config failed integrity verification");
-      }
-    } else {
-      await fs.rm(stagedConfig, { force: true });
-    }
-    await this.runInjector(stagedInjector);
-  }
-
-  getStageRoot(inspection) {
-    const safeId = inspection.id.replace(/[^a-z0-9._-]/gi, "_");
-    return path.join(this.userDataPath, "native-runtime", safeId, inspection.actualHash);
+    await this.runInjector(inspection.payloadPath, targetPid);
   }
 
   async handleProcess(gameProcess, activeModFolders) {
@@ -334,44 +543,21 @@ class NativeRuntimeManager {
       this.setStatus({ phase: "inactive", label: "Inactive", message: "No active native mods", loaded: 0, total: 0, mods: [] });
       return;
     }
-    if (inspections.length > 1) {
-      this.setStatus({
-        phase: "blocked",
-        label: "Blocked",
-        message: "This runtime version supports one active native mod at a time",
-        loaded: this.injectedIds.size,
-        total: inspections.length,
-        mods: inspections.map((item) => this.publicInspection(item))
-      });
-      return;
-    }
-
-    const blocked = inspections.find((item) => item.phase !== "ready");
-    if (blocked) {
-      const incompatible = blocked.phase === "incompatible";
-      this.setStatus({
-        phase: incompatible ? "incompatible" : "blocked",
-        label: incompatible ? blocked.label : "Blocked",
-        message: `${blocked.displayName || blocked.id || "Native mod"}: ${blocked.message}`,
-        loaded: this.injectedIds.size,
-        total: inspections.length,
-        mods: inspections.map((item) => this.publicInspection(item))
-      });
-      return;
-    }
 
     const loadedModulePaths = new Set(
       (Array.isArray(gameProcess.nativeModules) ? gameProcess.nativeModules : gameProcess.nativeModules ? [gameProcess.nativeModules] : [])
-        .map((modulePath) => path.normalize(modulePath).toLowerCase())
+        .map(normalizedModulePath)
     );
     for (const inspection of inspections) {
-      const expectedModule = path.join(this.getStageRoot(inspection), STAGED_PAYLOAD_NAME).toLowerCase();
-      if (loadedModulePaths.has(path.normalize(expectedModule))) {
-        this.injectedIds.add(inspection.id);
+      if (inspection.payloadPath && loadedModulePaths.has(normalizedModulePath(inspection.payloadPath))) {
+        this.injectedIds.add(inspection.identity);
       }
     }
 
-    if (!(await this.isGameReady(gameProcess))) {
+    const ready = inspections.filter((inspection) => inspection.phase === "ready");
+    const blocked = inspections.filter((inspection) => inspection.phase !== "ready");
+    const pending = ready.filter((inspection) => !this.injectedIds.has(inspection.identity));
+    if (pending.length && !(await this.isGameReady(gameProcess))) {
       this.setStatus({
         phase: "waiting",
         label: "Waiting",
@@ -383,72 +569,64 @@ class NativeRuntimeManager {
       return;
     }
 
-    const gameHash = await this.hashFile(gameProcess.path);
-    for (const inspection of inspections) {
-      const trusted = this.trustedNativeMods.get(inspection.id);
-      const supportedGameHashes = getSupportedGameHashes(trusted, inspection.actualHash);
-      if (!supportedGameHashes.has(gameHash)) {
-        this.setStatus({
-          phase: "incompatible",
-          label: "Update required",
-          message: `${inspection.displayName || inspection.id} does not support this Bellwright build`,
-          loaded: this.injectedIds.size,
-          total: inspections.length,
-          mods: inspections.map((item) => this.publicInspection(item))
-        });
-        return;
+    const failures = [];
+    if (pending.length) {
+      this.setStatus({
+        phase: "loading",
+        label: "Loading",
+        message: `Loading ${pending[0].displayName || pending[0].id} directly from its mod folder`,
+        loaded: this.injectedIds.size,
+        total: inspections.length,
+        mods: inspections.map((item) => this.publicInspection(item))
+      });
+      for (const inspection of pending) {
+        try {
+          await this.injectDirect(inspection, gameProcess.pid);
+          this.injectedIds.add(inspection.identity);
+        } catch (error) {
+          failures.push({ inspection, message: error.message || String(error) });
+        }
       }
     }
 
-    const pending = inspections.filter((inspection) => !this.injectedIds.has(inspection.id));
-    if (!pending.length) {
+    const loaded = inspections.filter((inspection) => this.injectedIds.has(inspection.identity)).length;
+    const publicMods = inspections.map((inspection) => {
+      const failure = failures.find((item) => item.inspection.identity === inspection.identity);
+      if (failure) {
+        return { ...this.publicInspection(inspection), phase: "failed", label: "Failed", message: failure.message };
+      }
+      if (this.injectedIds.has(inspection.identity)) {
+        return { ...this.publicInspection(inspection), phase: "loaded", label: inspection.verified ? "Verified loaded" : "Community loaded" };
+      }
+      return this.publicInspection(inspection);
+    });
+
+    if (failures.length || blocked.length) {
+      const firstProblem = failures[0]?.message || blocked[0]?.message || "Native runtime approval is required";
       this.setStatus({
-        phase: "loaded",
-        label: "Loaded",
-        message: `${inspections.length} native mod${inspections.length === 1 ? "" : "s"} loaded in Bellwright PID ${gameProcess.pid}`,
-        loaded: inspections.length,
+        phase: loaded ? "partial" : blocked.some((item) => item.phase === "approval-required") ? "approval-required" : "blocked",
+        label: loaded ? "Partial" : blocked.some((item) => item.phase === "approval-required") ? "Approval required" : "Blocked",
+        message: loaded ? `${loaded}/${inspections.length} native mods loaded; ${firstProblem}` : firstProblem,
+        loaded,
         total: inspections.length,
-        mods: inspections.map((item) => ({ ...this.publicInspection(item), phase: "loaded", label: "Runtime loaded" }))
+        mods: publicMods
       });
       return;
     }
 
     this.setStatus({
-      phase: "loading",
-      label: "Loading",
-      message: `Loading ${pending[0].displayName || pending[0].id}`,
-      loaded: this.injectedIds.size,
+      phase: "loaded",
+      label: "Loaded",
+      message: `${loaded} native mod${loaded === 1 ? "" : "s"} loaded in Bellwright PID ${gameProcess.pid}`,
+      loaded,
       total: inspections.length,
-      mods: inspections.map((item) => this.publicInspection(item))
+      mods: publicMods
     });
-
-    try {
-      for (const inspection of pending) {
-        await this.stageAndInject(inspection);
-        this.injectedIds.add(inspection.id);
-      }
-      this.setStatus({
-        phase: "loaded",
-        label: "Loaded",
-        message: `${inspections.length} native mod${inspections.length === 1 ? "" : "s"} loaded in Bellwright PID ${gameProcess.pid}`,
-        loaded: inspections.length,
-        total: inspections.length,
-        mods: inspections.map((item) => ({ ...this.publicInspection(item), phase: "loaded", label: "Runtime loaded" }))
-      });
-    } catch (error) {
-      this.setStatus({
-        phase: "failed",
-        label: "Failed",
-        message: error.message || String(error),
-        loaded: this.injectedIds.size,
-        total: inspections.length,
-        mods: inspections.map((item) => this.publicInspection(item))
-      });
-    }
   }
 }
 
 module.exports = {
+  BUNDLED_INJECTOR_HASH,
   MANIFEST_FILE,
   NativeRuntimeManager
 };
