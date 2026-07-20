@@ -842,6 +842,11 @@ p {
   background: var(--danger);
 }
 
+.nativeStateBadge.nativeCommunity {
+  color: #081719;
+  background: var(--accent-2);
+}
+
 .settingsButton:hover:not(:disabled) {
   background: rgba(197, 164, 103, 0.2);
 }

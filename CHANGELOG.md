@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0] - 2026-07-20
+
+- Load approved native DLLs directly from their local or Steam Workshop mod folders without copying or renaming them into a launcher runtime cache.
+- Automatically detect a single x64 native DLL, parse PE imports to distinguish the main mod DLL from local dependencies, and offer a one-time selection when a package is genuinely ambiguous.
+- Allow several native mods in one Bellwright process and track them by their real module paths.
+- Open native loading to community authors without a central allowlist. Unsigned DLLs require explicit user approval for one exact version or the specific mod; signed payloads receive a `Verified` status.
+- Verify official native payloads with a pinned ExcelsiorOne Ed25519 public key and bind the payload hash, manifest, and supported Bellwright builds into the signature.
+- Keep the launcher-bundled injector integrity-pinned while passing it the selected DLL path and Bellwright PID explicitly.
+- Support the signed Settlement Immigration 1.2.0 runtime, which makes newcomers ask permission to settle and gives accepted immigrants zero Used Renown cost.
+- Preserve native mod options in their Workshop folder; Settlement Immigration keeps all ten newcomer-frequency profiles without a staged config copy.
+- Add regression coverage for direct injection, signed and unsigned trust, automatic DLL discovery, dependency roots, and ambiguous packages.
+- Prevent a stale full-state refresh from replacing a newer `Loaded` native-runtime event with an outdated `Waiting` label.
+- Keep local native mods separate from Workshop identities even when `modinfo.json` contains a copied or spoofed Steam item ID, so approvals and loaded status cannot leak between them.
+- Replace the PowerShell relaunch handoff with a small x64 Windows GUI helper that starts the updater with no console window and no inherited standard handles.
+- Spell out that one-time DLL approval is hash-specific while trusting a mod also permits its future Workshop DLL updates.
+- Keep automatic updating from v0.5.8 through v0.5.10: their existing in-place updater installs v0.6.0, and the new GUI-safe handoff takes over for every later update. Versions through v0.5.7 may still require one final manual download.
+- Exclude Electron's unused `resources/default_app.asar` fallback from the portable package so legacy updaters cannot keep the extracted copy locked and leave their download session behind after the first v0.6.0 launch.
+
 ## [0.5.10] - 2026-07-17
 
 - Show a small notification badge on the Update button after a background check confirms that a newer Windows release is available.
