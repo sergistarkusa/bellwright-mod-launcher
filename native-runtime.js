@@ -125,6 +125,10 @@ class NativeRuntimeManager {
     this.gameLogPath = options.gameLogPath;
     this.resolveGameExecutablePath = options.resolveGameExecutablePath || (async () => null);
     this.trustedNativeMods = options.trustedNativeMods || TRUSTED_NATIVE_MODS;
+    // Optional (injectorPath, payloadPath, targetPid) -> Promise<stdout> override.
+    // Used on Linux to run the bundled injector through Proton; Windows keeps the
+    // default execFile behavior below.
+    this.runInjectorOverride = typeof options.runInjector === "function" ? options.runInjector : null;
     this.onStatusChanged = options.onStatusChanged || (() => {});
     this.hashCache = new Map();
     this.preferences = null;
@@ -485,6 +489,9 @@ class NativeRuntimeManager {
   }
 
   async runInjector(payloadPath, targetPid) {
+    if (this.runInjectorOverride) {
+      return this.runInjectorOverride(this.bundledInjectorPath, payloadPath, targetPid);
+    }
     return new Promise((resolve, reject) => {
       childProcess.execFile(
         this.bundledInjectorPath,
