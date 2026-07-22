@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1] - 2026-07-22
+
+- Make file-conflict details accept mouse input and scroll independently instead of scrolling the mod list behind them.
+- Keep the conflict popup open while the pointer moves from the warning badge into the popup, then close it after the pointer leaves.
+- Stop the conflict popup from following the pointer so its scrollbar remains reachable.
+- Add regression coverage for interactive conflict-detail scrolling.
+
 ## [0.6.0] - 2026-07-20
 
 - Load approved native DLLs directly from their local or Steam Workshop mod folders without copying or renaming them into a launcher runtime cache.

@@ -67,6 +67,7 @@ let state = null;
 let presets = [];
 let busy = false;
 let toastTimer = null;
+let conflictTooltipHideTimer = null;
 let pendingModal = null;
 let pendingGameRunningState = null;
 let gameStateRefreshRunning = false;
@@ -765,12 +766,12 @@ function renderColumn(list, empty, mods) {
     card.addEventListener("mouseenter", () => showModTooltip(mod, card));
     card.addEventListener("mouseleave", () => {
       hideModTooltip();
-      hideConflictTooltip();
+      scheduleConflictTooltipHide();
     });
     card.addEventListener("focus", () => showModTooltip(mod, card));
     card.addEventListener("blur", () => {
       hideModTooltip();
-      hideConflictTooltip();
+      scheduleConflictTooltipHide();
     });
 
     const conflictBadgeElement = card.querySelector(".conflictBadge");
@@ -780,15 +781,12 @@ function renderColumn(list, empty, mods) {
         hideModTooltip();
         showConflictTooltip(mod, event);
       });
-      conflictBadgeElement.addEventListener("mousemove", (event) => {
-        positionConflictTooltip(event);
-      });
-      conflictBadgeElement.addEventListener("mouseleave", hideConflictTooltip);
+      conflictBadgeElement.addEventListener("mouseleave", scheduleConflictTooltipHide);
       conflictBadgeElement.addEventListener("focus", (event) => {
         hideModTooltip();
         showConflictTooltip(mod, event);
       });
-      conflictBadgeElement.addEventListener("blur", hideConflictTooltip);
+      conflictBadgeElement.addEventListener("blur", scheduleConflictTooltipHide);
     }
 
     card.addEventListener("dragstart", (event) => {
@@ -985,6 +983,7 @@ function positionConflictTooltip(event) {
 }
 
 function showConflictTooltip(mod, event) {
+  cancelConflictTooltipHide();
   const conflicts = getConflictsForMod(mod);
   if (!conflicts.length) {
     hideConflictTooltip();
@@ -1019,8 +1018,27 @@ function showConflictTooltip(mod, event) {
 }
 
 function hideConflictTooltip() {
+  cancelConflictTooltipHide();
   conflictTooltip.hidden = true;
 }
+
+function cancelConflictTooltipHide() {
+  if (conflictTooltipHideTimer) {
+    clearTimeout(conflictTooltipHideTimer);
+    conflictTooltipHideTimer = null;
+  }
+}
+
+function scheduleConflictTooltipHide() {
+  cancelConflictTooltipHide();
+  conflictTooltipHideTimer = setTimeout(() => {
+    conflictTooltip.hidden = true;
+    conflictTooltipHideTimer = null;
+  }, 180);
+}
+
+conflictTooltip.addEventListener("mouseenter", cancelConflictTooltipHide);
+conflictTooltip.addEventListener("mouseleave", scheduleConflictTooltipHide);
 
 function escapeHtml(value) {
   return String(value ?? "")

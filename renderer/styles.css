@@ -937,13 +937,15 @@ p {
   width: min(380px, calc(100vw - 28px));
   max-height: min(460px, calc(100vh - 28px));
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(20, 23, 22, 0.98);
   color: var(--text);
   box-shadow: 0 20px 58px rgba(0, 0, 0, 0.5);
-  pointer-events: none;
+  pointer-events: auto;
 }
 
 .conflictTooltip[hidden] {

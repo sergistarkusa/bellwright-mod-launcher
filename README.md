@@ -36,7 +36,7 @@ Use the latest Windows portable ZIP from the GitHub Releases page.
 
 Unzip it anywhere and run `BellwrightModLauncher.exe` from the stable `BellwrightModLauncher` folder. The downloaded ZIP filename contains the release version; the application folder does not.
 
-**Upgrading from v0.5.8 or newer:** use the launcher's normal Update button. These versions already replace files inside the stable `BellwrightModLauncher` folder and can install v0.6.0 automatically. The transition itself still starts through the older hidden PowerShell handoff; after v0.6.0 is running, every later update uses the new GUI-safe handoff. Versions through v0.5.7 may require one final manual download because their older updater predates stable in-place replacement.
+**Upgrading from v0.5.8 or newer:** use the launcher's normal Update button. These versions already replace files inside the stable `BellwrightModLauncher` folder and can install v0.6.1 automatically. The transition from a pre-v0.6.0 build still starts through the older hidden PowerShell handoff; after v0.6.0 is running, every later update uses the new GUI-safe handoff. Versions through v0.5.7 may require one final manual download because their older updater predates stable in-place replacement.
 
 **Native mod users should install v0.6.0 or newer.** The launcher remains active in the background until native runtime loading is complete, loads each approved DLL directly from its mod folder, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
 

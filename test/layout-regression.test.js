@@ -128,14 +128,22 @@ test("large mod lists scroll independently without shrinking cards", () => {
   assert.match(styles, /\.topbar,[\s\S]*\.statusStrip,[\s\S]*\.controls,[\s\S]*\.updateProgress\s*\{[^}]*flex:\s*0\s+0\s+auto/s);
 });
 
+test("conflict details accept independent mouse scrolling", () => {
+  assert.match(styles, /\.conflictTooltip\s*\{[^}]*overflow:\s*auto[^}]*overscroll-behavior:\s*contain[^}]*pointer-events:\s*auto/s);
+  assert.doesNotMatch(styles, /\.conflictTooltip\s*\{[^}]*pointer-events:\s*none/s);
+  assert.match(renderer, /conflictTooltip\.addEventListener\("mouseenter", cancelConflictTooltipHide\)/);
+  assert.match(renderer, /conflictTooltip\.addEventListener\("mouseleave", scheduleConflictTooltipHide\)/);
+  assert.doesNotMatch(renderer, /conflictBadgeElement\.addEventListener\("mousemove"/);
+});
+
 test("large-list visual fixture exercises 200 active mods", () => {
   const fixture = fs.readFileSync(path.join(__dirname, "fixtures", "large-list.html"), "utf8");
   assert.match(fixture, /activeCount\s*=\s*Number\(params\.get\("active"\)\s*\|\|\s*200\)/);
 });
 
-test("v0.5.8 and newer users retain the automatic path into v0.6.0", () => {
+test("v0.5.8 and newer users retain the automatic path into v0.6.1", () => {
   assert.match(readme, /Upgrading from v0\.5\.8 or newer:[\s\S]*normal Update button/);
-  assert.match(readme, /can install v0\.6\.0 automatically/);
+  assert.match(readme, /can install v0\.6\.1 automatically/);
   assert.doesNotMatch(readme, /v0\.5\.10 or older:[\s\S]*manually/);
 });
 
