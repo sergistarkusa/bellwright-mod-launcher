@@ -53,6 +53,8 @@ Copy-Item -LiteralPath (Join-Path $projectRoot "native-discovery.js") -Destinati
 Copy-Item -LiteralPath (Join-Path $projectRoot "native-signature.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "variant-settings.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "update-cleanup.js") -Destination $appRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot "linux-support.js") -Destination $appRoot
+Copy-Item -LiteralPath (Join-Path $projectRoot "linux-proton.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "preload.js") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "package.json") -Destination $appRoot
 Copy-Item -LiteralPath (Join-Path $projectRoot "package-lock.json") -Destination $appRoot

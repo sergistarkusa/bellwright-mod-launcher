@@ -1,8 +1,13 @@
 {
   "name": "bellwright-mod-launcher",
+  "productName": "BellwrightModLauncher",
   "version": "0.6.0",
   "description": "Small local mod launcher for Bellwright.",
   "main": "main.js",
+  "author": {
+    "name": "ExcelsiorOne",
+    "email": "sergistarkusa@users.noreply.github.com"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/sergistarkusa/bellwright-mod-launcher.git"
@@ -15,9 +20,57 @@
     "start": "electron .",
     "test": "node --test test/*.test.js",
     "test:layout": "electron scripts/verify-large-list-layout.js",
-    "package:win": "powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1"
+    "package:win": "powershell -ExecutionPolicy Bypass -File scripts/package-windows.ps1",
+    "package:linux": "electron-builder --linux AppImage"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
   },
   "devDependencies": {
-    "electron": "^43.0.0"
+    "electron": "^43.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.excelsiorone.bellwrightmodlauncher",
+    "productName": "BellwrightModLauncher",
+    "artifactName": "${productName}-v${version}-linux-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "native-runtime.js",
+      "native-discovery.js",
+      "native-signature.js",
+      "variant-settings.js",
+      "update-cleanup.js",
+      "linux-support.js",
+      "linux-proton.js",
+      "preload.js",
+      "package.json",
+      "renderer/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime",
+        "to": "runtime",
+        "filter": [
+          "**/*",
+          "!*.log"
+        ]
+      }
+    ],
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game",
+      "executableName": "bellwright-mod-launcher"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "sergistarkusa",
+      "repo": "bellwright-mod-launcher"
+    }
   }
 }

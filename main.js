@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, shell, screen, dialog, clipboard } = require("electron");
 const fsNative = require("fs");
 const fs = require("fs/promises");
+const os = require("os");
 const path = require("path");
 const childProcess = require("child_process");
 const nodeCrypto = require("node:crypto");
@@ -15,9 +16,32 @@ const {
   findContainingUpdateSession,
   removeUpdateSession
 } = require("./update-cleanup");
+const { resolveLinuxSteamRoots, findLinuxGameProcess } = require("./linux-support");
+const { runNativeInjectorOnLinux } = require("./linux-proton");
+
+// The only two platforms this launcher supports; every OS-conditional path
+// below branches on these instead of repeating process.platform checks.
+const IS_WINDOWS = process.platform === "win32";
+const IS_LINUX = process.platform === "linux";
+
+// Windows self-updates through its own hidden-PowerShell handoff (below); Linux
+// packages as an AppImage and updates through the standard electron-updater +
+// GitHub Releases flow instead, so only load it on Linux.
+const autoUpdater = IS_LINUX ? require("electron-updater").autoUpdater : null;
+
+// electron-updater's Linux AppImage provider only works when launched from the
+// AppImage itself (it reads process.env.APPIMAGE to find the file to replace).
+// A packaged-but-unpacked run (e.g. release/linux-unpacked, or a future .deb
+// install) is still app.isPackaged, so without this check it would throw
+// "APPIMAGE env is not defined" instead of the UI simply hiding the Update button.
+function linuxUpdatesAvailable() {
+  return !IS_LINUX || Boolean(process.env.APPIMAGE);
+}
 
 const GAME_APP_ID = "1812450";
-const DEFAULT_STEAM_ROOT = path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Steam");
+const DEFAULT_STEAM_ROOT = IS_LINUX
+  ? path.join(os.homedir(), ".steam", "steam")
+  : path.join(process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)", "Steam");
 const DEFAULT_GAME_ROOT = path.join(DEFAULT_STEAM_ROOT, "steamapps", "common", "Bellwright", "Bellwright");
 const DISABLED_FOLDER_NAME = "_disabled_by_bellwright_launcher";
 const LEGACY_DISABLED_FOLDER_NAME = "_disabled_for_runtime_scoped_test";
@@ -368,11 +392,61 @@ function scheduleStaleUpdateCleanup(delayMs = 5000, retryAttempt = 0) {
   timer.unref?.();
 }
 
+// The Windows build (scripts/package-windows.ps1) copies runtime/ as a plain
+// folder next to main.js, so __dirname/runtime always works there. The Linux
+// build (electron-builder) packs main.js into app.asar and ships runtime/ as
+// extraResources instead — a sibling of app.asar under resources/, which
+// __dirname can't reach from inside the archive. Check both real locations
+// instead of assuming one packaging layout.
+function resolveRuntimeDir() {
+  const candidates = [
+    path.join(__dirname, "runtime"),
+    process.resourcesPath ? path.join(process.resourcesPath, "runtime") : null
+  ].filter(Boolean);
+  for (const candidate of candidates) {
+    if (fsNative.existsSync(path.join(candidate, "BellwrightNativeInjector.exe"))) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
 app.whenReady().then(async () => {
+  if (!IS_WINDOWS && !IS_LINUX) {
+    dialog.showErrorBox(
+      "Unsupported platform",
+      "Bellwright Mod Launcher runs on Windows and Linux (Steam Play / Proton) only."
+    );
+    app.quit();
+    return;
+  }
+
+  if (autoUpdater) {
+    autoUpdater.autoDownload = false;
+    autoUpdater.autoInstallOnAppQuit = false;
+    // electron-updater emits "error" as an EventEmitter event on top of rejecting
+    // its promises. Without a listener, a failed background check (no release
+    // published yet, offline, run outside an AppImage) throws "Unhandled 'error'
+    // event" and takes down the main process. Log-only: the check/update flows
+    // already surface failures to the renderer through their own rejections.
+    autoUpdater.on("error", (error) => {
+      console.error("[updater] electron-updater error", error);
+    });
+    // Optional local-test override, never set in production: point the update
+    // feed at a fork release without touching the committed app-update.yml.
+    if (process.env.BELLWRIGHT_UPDATE_FEED_OWNER && process.env.BELLWRIGHT_UPDATE_FEED_REPO) {
+      autoUpdater.setFeedURL({
+        provider: "github",
+        owner: process.env.BELLWRIGHT_UPDATE_FEED_OWNER,
+        repo: process.env.BELLWRIGHT_UPDATE_FEED_REPO
+      });
+    }
+  }
+
   nativeRuntimeManager = new NativeRuntimeManager({
     userDataPath: app.getPath("userData"),
-    bundledInjectorPath: path.join(__dirname, "runtime", "BellwrightNativeInjector.exe"),
-    gameLogPath: path.join(getLocalAppDataPath(), "Bellwright", "Saved", "Logs", "Bellwright.log"),
+    bundledInjectorPath: path.join(resolveRuntimeDir(), "BellwrightNativeInjector.exe"),
+    gameLogPath: path.join(await getLocalAppDataPath(), "Bellwright", "Saved", "Logs", "Bellwright.log"),
     resolveGameExecutablePath: async () => {
       const { gameRoot } = await getInstallPaths();
       return path.join(gameRoot, "Binaries", "Win64", "BellwrightGame-Win64-Shipping.exe");
@@ -381,15 +455,23 @@ app.whenReady().then(async () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("mods:nativeRuntimeChanged", status);
       }
-    }
+    },
+    runInjector: IS_LINUX
+      ? (injectorPath, payloadPath, targetPid) => runNativeInjectorOnLinux(injectorPath, payloadPath, targetPid)
+      : undefined
   });
   await nativeRuntimeManager.cleanupLegacyRuntimeCache().catch((error) => {
     console.error("[native-runtime] failed to remove legacy staging cache", error);
   });
   createWindow();
   startGameRunningWatcher();
-  scheduleActiveUpdateSessionCleanup();
-  scheduleStaleUpdateCleanup();
+  if (IS_WINDOWS) {
+    // Both calls target the PowerShell-based update-artifact cleanup that only
+    // applies to the Windows in-place updater; Linux self-updates through
+    // electron-updater and never creates these artifacts.
+    scheduleActiveUpdateSessionCleanup();
+    scheduleStaleUpdateCleanup();
+  }
 });
 
 app.on("before-quit", () => {
@@ -477,7 +559,11 @@ async function queryRegistryString(key, valueName) {
 }
 
 function decodeSteamVdfPath(value) {
-  return value.replace(/\\\\/g, "\\").replace(/\//g, "\\");
+  const unescaped = value.replace(/\\\\/g, "\\");
+  // Steam's VDF always escapes backslashes the same way on every platform, but the
+  // paths themselves are native: Windows paths need forward slashes converted back,
+  // Linux paths are already real Unix paths and must be left alone.
+  return IS_WINDOWS ? unescaped.replace(/\//g, "\\") : unescaped;
 }
 
 async function readSteamLibraries(steamRoot) {
@@ -498,19 +584,26 @@ async function readSteamLibraries(steamRoot) {
 
 async function getSteamLibraryRoots() {
   const roots = new Set([DEFAULT_STEAM_ROOT]);
-  const registryKeys = [
-    "HKCU\\Software\\Valve\\Steam",
-    "HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam",
-    "HKLM\\SOFTWARE\\Valve\\Steam"
-  ];
 
-  for (const key of registryKeys) {
-    const steamPath = await queryRegistryString(key, "SteamPath");
-    const installPath = await queryRegistryString(key, "InstallPath");
-    for (const candidate of [steamPath, installPath]) {
-      if (candidate) {
-        roots.add(candidate);
+  if (IS_WINDOWS) {
+    const registryKeys = [
+      "HKCU\\Software\\Valve\\Steam",
+      "HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam",
+      "HKLM\\SOFTWARE\\Valve\\Steam"
+    ];
+
+    for (const key of registryKeys) {
+      const steamPath = await queryRegistryString(key, "SteamPath");
+      const installPath = await queryRegistryString(key, "InstallPath");
+      for (const candidate of [steamPath, installPath]) {
+        if (candidate) {
+          roots.add(candidate);
+        }
       }
+    }
+  } else if (IS_LINUX) {
+    for (const root of await resolveLinuxSteamRoots()) {
+      roots.add(root);
     }
   }
 
@@ -557,6 +650,7 @@ async function getInstallPaths() {
 
   cachedInstallPaths = {
     gameRoot,
+    gameLibraryRoot,
     modsRoot,
     workshopRoot,
     disabledRoot: path.join(gameRoot, "Content", DISABLED_FOLDER_NAME),
@@ -564,6 +658,15 @@ async function getInstallPaths() {
     legacyDisabledRoot: path.join(modsRoot, DISABLED_FOLDER_NAME),
     legacyRuntimeDisabledRoot: path.join(modsRoot, LEGACY_DISABLED_FOLDER_NAME)
   };
+
+  if (IS_LINUX) {
+    // Bellwright's log/config files live inside the Proton prefix, under the
+    // Windows-style user profile Proton creates for the "steamuser" account.
+    const compatDataRoot = path.join(gameLibraryRoot, "steamapps", "compatdata", GAME_APP_ID);
+    cachedInstallPaths.compatDataRoot = compatDataRoot;
+    cachedInstallPaths.prefixDriveC = path.join(compatDataRoot, "pfx", "drive_c");
+  }
+
   return cachedInstallPaths;
 }
 
@@ -670,6 +773,15 @@ async function describeMod(folderPath, status, sourceRoot = null, options = {}) 
 }
 
 async function getGameProcess() {
+  if (IS_LINUX) {
+    const { gameRoot } = await getInstallPaths();
+    const expectedExecutablePath = path.join(gameRoot, "Binaries", "Win64", "BellwrightGame-Win64-Shipping.exe");
+    return findLinuxGameProcess({
+      names: [...GAME_PROCESS_NAMES],
+      expectedExecutablePath
+    });
+  }
+
   const names = [...GAME_PROCESS_NAMES].map((name) => path.basename(name, ".exe"));
   const script = `$names=@(${names.map((name) => `'${name.replace(/'/g, "''")}'`).join(",")});` +
     "$all=@(Get-Process -Name $names -ErrorAction SilentlyContinue);" +
@@ -705,12 +817,18 @@ async function getActiveModFolders() {
   return folders;
 }
 
-function getLocalAppDataPath() {
+async function getLocalAppDataPath() {
+  if (IS_LINUX) {
+    const { prefixDriveC } = await getInstallPaths();
+    if (prefixDriveC) {
+      return path.join(prefixDriveC, "users", "steamuser", "AppData", "Local");
+    }
+  }
   return process.env.LOCALAPPDATA || path.join(process.env.USERPROFILE || app.getPath("home"), "AppData", "Local");
 }
 
-function getModLoadOrderPath() {
-  return path.join(getLocalAppDataPath(), "Bellwright", "Saved", "Config", MOD_LOAD_ORDER_FILE);
+async function getModLoadOrderPath() {
+  return path.join(await getLocalAppDataPath(), "Bellwright", "Saved", "Config", MOD_LOAD_ORDER_FILE);
 }
 
 function modLoadOrderKeyFromParts(name, steamId) {
@@ -733,7 +851,7 @@ function modLoadOrderEntryFromMod(mod) {
 }
 
 async function readModLoadOrder() {
-  const store = (await readJson(getModLoadOrderPath())) || {};
+  const store = (await readJson(await getModLoadOrderPath())) || {};
   const entries = Array.isArray(store.modLoadOrder) ? store.modLoadOrder : [];
   return entries
     .filter((entry) => entry && typeof entry.name === "string" && entry.name.trim())
@@ -761,7 +879,7 @@ async function writeModLoadOrder(entries) {
     seen.add(key);
     cleanEntries.push(cleanEntry);
   }
-  const filePath = getModLoadOrderPath();
+  const filePath = await getModLoadOrderPath();
   await ensureDirectory(path.dirname(filePath));
   await fs.writeFile(filePath, `${JSON.stringify({ modLoadOrder: cleanEntries }, null, "\t")}\n`, "utf8");
 }
@@ -1155,7 +1273,7 @@ async function getState() {
     workshopRoot,
     disabledRoot,
     workshopDisabledRoot,
-    modLoadOrderPath: getModLoadOrderPath(),
+    modLoadOrderPath: await getModLoadOrderPath(),
     appId: GAME_APP_ID,
     gameRunning,
     nativeRuntime,
@@ -2082,9 +2200,29 @@ function describeLauncherRelease(release) {
   };
 }
 
+async function checkLauncherUpdateLinux() {
+  if (!linuxUpdatesAvailable()) {
+    return { status: "unsupported", currentVersion: packageInfo.version };
+  }
+  const checkResult = await autoUpdater.checkForUpdates();
+  const latestVersion = normalizeVersion(checkResult?.updateInfo?.version || "");
+  if (!latestVersion) {
+    throw new Error("Could not determine the latest release version from GitHub.");
+  }
+  return {
+    status: compareVersions(latestVersion, packageInfo.version) > 0 ? "available" : "up-to-date",
+    currentVersion: packageInfo.version,
+    latestVersion
+  };
+}
+
 async function checkLauncherUpdate() {
   if (!app.isPackaged) {
     return { status: "unsupported", currentVersion: packageInfo.version };
+  }
+
+  if (IS_LINUX) {
+    return checkLauncherUpdateLinux();
   }
 
   const release = await fetchLatestRelease();
@@ -2197,7 +2335,77 @@ async function startUpdaterAndQuit(stagedAppRoot, updateRoot, expectedVersion) {
   app.exit(0);
 }
 
+async function updateLauncherLinux() {
+  if (!linuxUpdatesAvailable()) {
+    throw new Error("Automatic updates require the AppImage build.");
+  }
+  if (updateInProgress) {
+    throw new Error("An update is already in progress.");
+  }
+  updateInProgress = true;
+  try {
+    sendUpdateProgress({ phase: "check", percent: 0, message: "Checking GitHub release..." });
+    const checkResult = await autoUpdater.checkForUpdates();
+    const latestVersion = normalizeVersion(checkResult?.updateInfo?.version || "");
+    if (!latestVersion || compareVersions(latestVersion, packageInfo.version) <= 0) {
+      sendUpdateProgress({ phase: "done", percent: 100, message: "Launcher is up to date." });
+      return { status: "up-to-date", currentVersion: packageInfo.version, latestVersion: latestVersion || packageInfo.version };
+    }
+
+    sendUpdateProgress({ phase: "download", percent: 0, message: `Downloading v${latestVersion}...` });
+    await new Promise((resolve, reject) => {
+      const onProgress = (progress) => {
+        sendUpdateProgress({
+          phase: "download",
+          percent: Math.round(progress?.percent || 0),
+          message: `Downloading v${latestVersion}...`
+        });
+      };
+      const cleanup = () => {
+        autoUpdater.removeListener("download-progress", onProgress);
+        autoUpdater.removeListener("error", onError);
+        autoUpdater.removeListener("update-downloaded", onDownloaded);
+      };
+      function onError(error) {
+        cleanup();
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+      function onDownloaded() {
+        cleanup();
+        resolve();
+      }
+      autoUpdater.on("download-progress", onProgress);
+      autoUpdater.once("error", onError);
+      autoUpdater.once("update-downloaded", onDownloaded);
+      autoUpdater.downloadUpdate().catch(onError);
+    });
+
+    sendUpdateProgress({ phase: "ready", percent: 100, message: "Update downloaded." });
+    const choice = await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      buttons: ["OK", "Later"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "Restart to apply update",
+      message: "Update downloaded. Restart to apply update?",
+      detail: `Bellwright Mod Launcher v${latestVersion} is ready.`
+    });
+
+    if (choice.response !== 0) {
+      return { status: "cancelled", latestVersion };
+    }
+
+    autoUpdater.quitAndInstall();
+    return { status: "restarting", latestVersion };
+  } finally {
+    updateInProgress = false;
+  }
+}
+
 async function updateLauncher() {
+  if (IS_LINUX) {
+    return updateLauncherLinux();
+  }
   if (updateInProgress) {
     throw new Error("An update is already in progress.");
   }
@@ -2278,7 +2486,7 @@ function getAppInfo() {
     version: packageInfo.version,
     donateUrl: DONATE_URL,
     discordUrl: DISCORD_URL,
-    updateSupported: app.isPackaged,
+    updateSupported: app.isPackaged && linuxUpdatesAvailable(),
     updateRepo: `${GITHUB_OWNER}/${GITHUB_REPO}`
   };
 }

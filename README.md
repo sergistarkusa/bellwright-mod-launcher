@@ -1,6 +1,6 @@
 # Bellwright Mod Launcher
 
-Small Windows launcher for managing Bellwright local and Steam Workshop mods.
+Small Windows and Linux launcher for managing Bellwright local and Steam Workshop mods.
 
 It shows installed mods in two compact columns:
 
@@ -39,6 +39,31 @@ Unzip it anywhere and run `BellwrightModLauncher.exe` from the stable `Bellwrigh
 **Upgrading from v0.5.8 or newer:** use the launcher's normal Update button. These versions already replace files inside the stable `BellwrightModLauncher` folder and can install v0.6.0 automatically. The transition itself still starts through the older hidden PowerShell handoff; after v0.6.0 is running, every later update uses the new GUI-safe handoff. Versions through v0.5.7 may require one final manual download because their older updater predates stable in-place replacement.
 
 **Native mod users should install v0.6.0 or newer.** The launcher remains active in the background until native runtime loading is complete, loads each approved DLL directly from its mod folder, and exits automatically when Bellwright closes. Starting the launcher executable again restores its window.
+
+## Linux (Steam Play / Proton)
+
+Use the AppImage from the GitHub Releases page. Only **native Steam** (`~/.steam`, `~/.local/share/Steam`) is required; Flatpak and snap Steam installs are also detected automatically.
+
+Bellwright must run through **Proton** (Steam Play), started from the same account the launcher runs as. The launcher locates the game the same way it does on Windows — by reading Steam's `libraryfolders.vdf` — and reads Bellwright's log and `modloadorder.json` from inside the Proton prefix (`steamapps/compatdata/1812450/pfx/drive_c/users/steamuser/...`) instead of `%LOCALAPPDATA%`.
+
+Native (DLL) mods are loaded the same way as on Windows: the bundled injector (`CreateRemoteThread` + `LoadLibraryW`) is unchanged. On Linux the launcher runs it *through Proton*, inside Bellwright's own prefix, by reconstructing that prefix's environment from the running game process — the injector then finds Bellwright and loads the mod DLL exactly as it does under native Windows. No Wine/Proton configuration is required beyond having Bellwright already installed and launchable.
+
+The launcher itself updates through the standard AppImage update flow (GitHub Releases) instead of the Windows PowerShell handoff.
+
+## Build From Source (Linux)
+
+Requirements:
+
+- Node.js, npm
+- A native Steam install (for testing against a real Bellwright/Proton prefix)
+
+```bash
+npm install
+npm start
+npm run package:linux
+```
+
+The packaged AppImage is written to `release/`.
 
 The updater does not depend on Microsoft Edge. It downloads the GitHub Release directly over HTTPS and uses a GUI-safe native handoff to start hidden Windows PowerShell for ZIP extraction and in-place replacement. The handoff does not create or inherit a console window. Cleanup retries temporary Windows file locks and schedules another background pass if a lock outlives the first attempt.
 
